@@ -17,7 +17,6 @@ from .errors import (  # re-export：provider 实现与测试从本模块拿全�
     CATEGORY_INVALID,
     CATEGORY_NETWORK,
     CATEGORY_TIMEOUT,
-    FetchError,
     ServiceError,
 )
 from .http import (  # re-export
@@ -29,7 +28,7 @@ from .http import (  # re-export
 
 __all__ = [
     "CATEGORY_EMPTY", "CATEGORY_HTTP", "CATEGORY_INVALID", "CATEGORY_NETWORK",
-    "CATEGORY_TIMEOUT", "FetchError", "ServiceError",
+    "CATEGORY_TIMEOUT", "ServiceError",
     "USER_AGENT", "build_multipart", "ensure_ascii", "http_get",
     "FetchResult", "ProviderOpts", "SearchResult", "SearchResponse",
     "ParamSpec", "Provider",

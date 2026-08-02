@@ -27,7 +27,13 @@ from typing import Any
 from urllib.parse import quote
 
 from ..base import ParamSpec, Provider, SearchResponse, SearchResult
-from ..errors import BackendError, CredentialsError, NoResultsError
+from ..errors import (
+    CATEGORY_HTTP,
+    CATEGORY_NETWORK,
+    CredentialsError,
+    NoResultsError,
+    ServiceError,
+)
 from ..registry import register
 
 # --- Endpoint constants ------------------------------------------------------
@@ -129,7 +135,7 @@ def sign_and_send_aksk(method: str, query: dict, body: dict,
     return _do_request(url, headers, body_str, timeout)
 
 
-# --- HTTP + response parsing（错误统一转 BackendError）-----------------------
+# --- HTTP + response parsing（错误统一转 ServiceError）-------------------------
 
 
 def _do_request(url: str, headers: dict, body_str: str, timeout: float) -> dict:
@@ -143,8 +149,8 @@ def _do_request(url: str, headers: dict, body_str: str, timeout: float) -> dict:
         raw = e.read().decode("utf-8", errors="replace")
         return _parse_response(raw, status=e.code)
     except urllib.error.URLError as e:
-        raise BackendError(
-            f"网络请求失败: {e.reason}", code="network_error") from None
+        raise ServiceError(
+            f"网络请求失败: {e.reason}", CATEGORY_NETWORK, code="network_error") from None
     return _parse_response(raw, status=status)
 
 
@@ -152,8 +158,9 @@ def _parse_response(raw: str, status: int | None = None) -> dict:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        raise BackendError(
-            f"非 JSON 响应 (HTTP {status}): {raw[:200]}", code="bad_response") from None
+        raise ServiceError(
+            f"非 JSON 响应 (HTTP {status}): {raw[:200]}", CATEGORY_HTTP,
+            code="bad_response") from None
 
     meta = payload.get("ResponseMetadata") or {}
     error = meta.get("Error")
@@ -165,7 +172,7 @@ def _parse_response(raw: str, status: int | None = None) -> dict:
         msg = f"[{code}] {message}"
         if request_id:
             msg += f" (request_id={request_id})"
-        raise BackendError(msg, code=code)
+        raise ServiceError(msg, CATEGORY_HTTP, code=code)
     return payload
 
 

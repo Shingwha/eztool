@@ -17,7 +17,14 @@ import urllib.request
 from typing import Any, Literal
 
 from ..base import ParamSpec, Provider, SearchResponse, SearchResult
-from ..errors import BackendError, CredentialsError, NoResultsError
+from ..errors import (
+    CATEGORY_HTTP,
+    CATEGORY_NETWORK,
+    CATEGORY_TIMEOUT,
+    CredentialsError,
+    NoResultsError,
+    ServiceError,
+)
 from ..registry import register
 
 # ── 常量 ───────────────────────────────────────────────────────────────────
@@ -144,7 +151,7 @@ def _request_search(
 ) -> tuple[str, list[SearchResult]]:
     """调 Anthropic 兼容端点（移植自原 core.py 的 search_web）。
 
-    返回 (AI 回答, 来源列表)。API/网络错误抛 BackendError，错误码沿用
+    返回 (AI 回答, 来源列表)。API/网络错误抛 ServiceError，错误码沿用
     原仓库（api_error / network_error）。
     """
     url = f"{base_url}/v1/messages"
@@ -184,26 +191,26 @@ def _request_search(
             err_text = e.read().decode("utf-8", errors="replace")
         except Exception:
             err_text = "Unable to read error body"
-        raise BackendError(
+        raise ServiceError(
             f"DeepSeek API error ({e.code}): {err_text}",
-            code="api_error",
+            CATEGORY_HTTP, code="api_error",
         ) from None
     except urllib.error.URLError as e:
         # 网络层错误（DNS、连接拒绝等）
-        raise BackendError(
+        raise ServiceError(
             f"Network error: {e.reason}",
-            code="network_error",
+            CATEGORY_NETWORK, code="network_error",
         ) from None
     except TimeoutError:
-        raise BackendError("Request timed out.", code="network_error") from None
+        raise ServiceError("Request timed out.", CATEGORY_TIMEOUT, code="network_error") from None
 
     # ── 解析响应 ──
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
-        raise BackendError(
+        raise ServiceError(
             f"无法解析 API 响应：{e}",
-            code="api_error",
+            CATEGORY_HTTP, code="api_error",
         ) from None
 
     content = data.get("content")

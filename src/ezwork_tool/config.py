@@ -2,7 +2,6 @@
 
 一段式结构：所有服务商凭证/超时统一放 ``providers.<name>`` 段，
 ``search/fetch/convert`` 段只保留公共设置（超时、回退链顺序）。
-旧结构（后端顶层段 + fetch/convert 内嵌 provider 子段）在 load 时自动迁移。
 """
 
 from __future__ import annotations
@@ -77,11 +76,6 @@ KEY_HINTS = {
     "convert.timeout": "文件转换默认超时秒数",
 }
 
-# 旧结构识别（v1 → v2 迁移）
-_OLD_TOP_KEYS = ("doubao", "anysearch", "deepseek")
-_OLD_PROVIDER_SUBSEC = ("firecrawl", "markdown", "jina", "mineru")
-
-
 def config_dir() -> str:
     return os.environ.get(CONFIG_DIR_ENV) or os.path.join(
         os.path.expanduser("~"), ".config", "ezwork-tool")
@@ -102,47 +96,9 @@ def deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
-def migrate_v1(raw: dict) -> dict | None:
-    """旧结构（后端顶层段 + fetch/convert 内嵌 provider 子段）→ 一段式。
-
-    返回迁移后的 dict；没有旧结构特征时返回 None。
-    """
-    if not isinstance(raw, dict):
-        return None
-    has_old = any(k in raw for k in _OLD_TOP_KEYS) or any(
-        isinstance(raw.get(sec), dict)
-        and any(k in raw[sec] for k in _OLD_PROVIDER_SUBSEC)
-        for sec in ("fetch", "convert")
-    )
-    if not has_old:
-        return None
-
-    out = {k: v for k, v in raw.items() if k not in _OLD_TOP_KEYS}
-    prov = out.setdefault("providers", {})
-    if not isinstance(prov, dict):
-        prov, out["providers"] = {}, {}
-
-    # 顶层后端段 → providers.<name>
-    for name in _OLD_TOP_KEYS:
-        if isinstance(raw.get(name), dict):
-            prov[name] = raw[name]
-
-    # fetch/convert 内嵌 provider 子段 → providers.<name>（fetch/convert 段只留 providers/timeout）
-    for sec in ("fetch", "convert"):
-        sec_cfg = raw.get(sec)
-        if not isinstance(sec_cfg, dict):
-            continue
-        for pname in _OLD_PROVIDER_SUBSEC:
-            pval = sec_cfg.get(pname)
-            if isinstance(pval, dict):
-                merged = deep_merge(prov.get(pname, {}), pval)
-                prov[pname] = merged
-        out[sec] = {k: v for k, v in sec_cfg.items() if k not in _OLD_PROVIDER_SUBSEC}
-    return out
-
 
 def load_config() -> dict:
-    """默认值 + 配置文件（损坏则静默回退默认；旧结构自动迁移并写回）。"""
+    """默认值 + 配置文件（损坏则静默回退默认）。"""
     cfg = deep_merge(DEFAULTS, {})
     path = config_path()
     if os.path.isfile(path):
@@ -150,13 +106,6 @@ def load_config() -> dict:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                migrated = migrate_v1(data)
-                if migrated is not None:
-                    data = migrated
-                    try:
-                        save_config(data)
-                    except OSError:
-                        pass  # 迁移写回失败不阻塞使用
                 cfg = deep_merge(cfg, data)
         except (OSError, ValueError):
             pass  # 损坏回退默认

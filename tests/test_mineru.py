@@ -69,7 +69,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
         self.provider = MinerUProvider()
 
     def test_missing_file_is_invalid(self):
-        with self.assertRaises(pmod.FetchError) as ctx:
+        with self.assertRaises(pmod.ServiceError) as ctx:
             self.provider.convert_file("C:/definitely/missing/report.pdf")
         self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
 
@@ -78,7 +78,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
             f.write(b"x")
             path = f.name  # .doc NOT supported by the lightweight API
         try:
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(path)
             self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
             self.assertIn(".doc", str(ctx.exception))
@@ -93,7 +93,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
                 "ezwork_tool.providers.mineru.os.path.getsize",
                 return_value=V1_MAX_FILE_SIZE + 1,
             ):
-                with self.assertRaises(pmod.FetchError) as ctx:
+                with self.assertRaises(pmod.ServiceError) as ctx:
                     self.provider.convert_file(path)
             self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
         finally:
@@ -185,7 +185,7 @@ class TestConvertFileFlow(unittest.TestCase):
             _resp({"code": 0, "data": {"task_id": "t1", "state": "failed",
                                        "err_code": -30003, "err_msg": "page limit exceeded"}}),
         ]):
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(self.tmp.name, timeout=60)
         self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
         self.assertIn("page limit", str(ctx.exception))
@@ -194,7 +194,7 @@ class TestConvertFileFlow(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", side_effect=[
             _resp({"code": -30002, "msg": "file type not supported"}),
         ]):
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(self.tmp.name, timeout=60)
         self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
 
@@ -207,7 +207,7 @@ class TestConvertFileFlow(unittest.TestCase):
         ] + [running] * 100), mock.patch(
             "time.sleep", side_effect=lambda s: real_sleep(0.05)
         ):
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(self.tmp.name, timeout=1)
         self.assertEqual(ctx.exception.category, pmod.CATEGORY_TIMEOUT)
 
@@ -239,7 +239,7 @@ class TestFetchFlow(unittest.TestCase):
 
     def test_http_429_maps_to_http(self):
         with mock.patch("urllib.request.urlopen", side_effect=_http_error(429)):
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.fetch("https://example.com/doc.pdf", timeout=60)
         self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
         self.assertEqual(ctx.exception.http_code, 429)
@@ -407,7 +407,7 @@ class TestV4WithToken(unittest.TestCase):
                 {"file_name": "x.pdf", "state": "failed",
                  "err_msg": "convert failed"}]}}),
         ]):
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(self.tmp.name, timeout=60)
         self.assertIn("convert failed", str(ctx.exception))
 
@@ -421,7 +421,7 @@ class TestV4WithToken(unittest.TestCase):
                  "full_zip_url": "https://cdn/r.zip"}]}}),
             _raw_resp(_make_zip(md="")),
         ]):
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(self.tmp.name, timeout=60)
         self.assertEqual(ctx.exception.category, pmod.CATEGORY_EMPTY)
 

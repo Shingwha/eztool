@@ -49,7 +49,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
         self.provider = MarkdownNewProvider()
 
     def test_missing_file_is_invalid(self):
-        with self.assertRaises(pmod.FetchError) as ctx:
+        with self.assertRaises(pmod.ServiceError) as ctx:
             self.provider.convert_file("C:/definitely/missing/file.pdf")
         self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
 
@@ -58,7 +58,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
             f.write(b"MZ")
             path = f.name
         try:
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(path)
             self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
             self.assertIn(".exe", str(ctx.exception))
@@ -73,7 +73,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
                 "ezwork_tool.providers.markdown_new.os.path.getsize",
                 return_value=11 * 1024 * 1024,
             ):
-                with self.assertRaises(pmod.FetchError) as ctx:
+                with self.assertRaises(pmod.ServiceError) as ctx:
                     self.provider.convert_file(path)
             self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
         finally:
@@ -118,7 +118,7 @@ class TestConvertFileHttp(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             path = f.name
         try:
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(path)
             self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
             self.assertIn("Unsupported file type", str(ctx.exception))
@@ -133,7 +133,7 @@ class TestConvertFileHttp(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             path = f.name
         try:
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(path)
             self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
             self.assertIn("internal boom", str(ctx.exception))
@@ -152,7 +152,7 @@ class TestConvertFileHttp(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             path = f.name
         try:
-            with self.assertRaises(pmod.FetchError) as ctx:
+            with self.assertRaises(pmod.ServiceError) as ctx:
                 self.provider.convert_file(path)
             self.assertEqual(ctx.exception.category, pmod.CATEGORY_EMPTY)
         finally:

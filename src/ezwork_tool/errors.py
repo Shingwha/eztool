@@ -60,19 +60,6 @@ class ServiceError(EztoolError):
         return self.message
 
 
-# 历史命名兼容：
-# - FetchError 与 ServiceError 完全同构（provider 实现按 (msg, category, http_code) 构造）
-# - BackendError 是 (msg, code) 构造的子类（search 后端沿用原签名，category 默认 http）
-FetchError = ServiceError
-
-
-class BackendError(ServiceError):
-    """后端 API 调用失败（历史命名）。category 默认 http（可重试）。"""
-
-    def __init__(self, message: str, code: str | None = None):
-        super().__init__(message, CATEGORY_HTTP, code=code)
-
-
 class UsageError(EztoolError):
     """参数用法错误（参数不属于当前后端等）。"""
 

@@ -13,7 +13,15 @@ import urllib.request
 from typing import Any
 
 from ..base import ParamSpec, Provider, SearchResponse, SearchResult
-from ..errors import BackendError, NoResultsError, UsageError
+from ..errors import (
+    CATEGORY_HTTP,
+    CATEGORY_INVALID,
+    CATEGORY_NETWORK,
+    CATEGORY_TIMEOUT,
+    NoResultsError,
+    ServiceError,
+    UsageError,
+)
 from ..registry import register
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
@@ -128,7 +136,7 @@ def _test_credentials(cfg: dict) -> str:
     return f"OK ({elapsed:.1f}s)"
 
 
-# ── 核心 API 调用（原 core.py 逻辑，SearchError → BackendError）──────────────
+# ── 核心 API 调用（原 core.py 逻辑，SearchError → ServiceError）──────────────
 
 
 def _call_api(
@@ -146,10 +154,10 @@ def _call_api(
     """调用 AnySearch 统一搜索 API，返回解析后的顶层 JSON dict。
 
     Raises:
-        BackendError: 空 query / 网络错误 / API 错误（code 保留原语义码）。
+        ServiceError: 空 query / 网络错误 / API 错误（code 保留原语义码）。
     """
     if not query or not query.strip():
-        raise BackendError("Search query is empty.", code="invalid_request")
+        raise ServiceError("Search query is empty.", CATEGORY_INVALID, code="invalid_request")
 
     url = f"{base_url or DEFAULT_BASE_URL}/v1/search"
 
@@ -189,23 +197,23 @@ def _call_api(
             pass
         error_msg = err_data.get("message", err_text)
         code = _ERROR_CODES.get(e.code, f"http_{e.code}")
-        raise BackendError(
-            f"AnySearch API error ({e.code}): {error_msg}", code=code
+        raise ServiceError(
+            f"AnySearch API error ({e.code}): {error_msg}", CATEGORY_HTTP, code=code
         ) from None
     except urllib.error.URLError as e:
-        raise BackendError(f"Network error: {e.reason}", code="network_error") from None
+        raise ServiceError(f"Network error: {e.reason}", CATEGORY_NETWORK, code="network_error") from None
     except TimeoutError:
-        raise BackendError("Request timed out.", code="network_error") from None
+        raise ServiceError("Request timed out.", CATEGORY_TIMEOUT, code="network_error") from None
 
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
-        raise BackendError(f"Could not parse API response: {e}", code="api_error") from None
+        raise ServiceError(f"Could not parse API response: {e}", CATEGORY_HTTP, code="api_error") from None
 
     code = data.get("code", -1)
     if code != 0:
         msg = data.get("message", "Unknown error")
-        raise BackendError(f"API returned error: {msg}", code=f"api_error_{code}")
+        raise ServiceError(f"API returned error: {msg}", CATEGORY_HTTP, code=f"api_error_{code}")
 
     return data
 

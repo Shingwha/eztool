@@ -25,41 +25,6 @@ class TestDeepMerge(unittest.TestCase):
         self.assertEqual(out["providers"]["doubao"]["count_web"], 10)
 
 
-class TestMigrateV1(unittest.TestCase):
-    def test_new_structure_passthrough(self):
-        raw = {"providers": {"doubao": {"api_key": "k"}}, "fetch": {"timeout": 10}}
-        self.assertIsNone(cfgmod.migrate_v1(raw))
-
-    def test_top_level_backends_moved(self):
-        raw = {"doubao": {"api_key": "k"}, "anysearch": {"max_results": 5}}
-        out = cfgmod.migrate_v1(raw)
-        self.assertEqual(out["providers"]["doubao"]["api_key"], "k")
-        self.assertEqual(out["providers"]["anysearch"]["max_results"], 5)
-        self.assertNotIn("doubao", out)
-
-    def test_fetch_convert_subsections_merged(self):
-        raw = {
-            "fetch": {"providers": ["firecrawl"], "timeout": 30,
-                      "firecrawl": {"api_key": "f"}, "jina": {"timeout": 5}},
-            "convert": {"providers": ["mineru"], "timeout": 60,
-                        "mineru": {"api_key": "m", "timeout": 120}},
-        }
-        out = cfgmod.migrate_v1(raw)
-        self.assertEqual(out["providers"]["firecrawl"]["api_key"], "f")
-        self.assertEqual(out["providers"]["mineru"], {"api_key": "m", "timeout": 120})
-        self.assertEqual(out["fetch"], {"providers": ["firecrawl"], "timeout": 30})
-        self.assertEqual(out["convert"], {"providers": ["mineru"], "timeout": 60})
-
-    def test_mineru_key_deduplicated(self):
-        raw = {
-            "fetch": {"mineru": {"api_key": "k1"}},
-            "convert": {"mineru": {"api_key": "k2", "timeout": 9}},
-        }
-        out = cfgmod.migrate_v1(raw)
-        self.assertEqual(out["providers"]["mineru"]["api_key"], "k2")  # convert 覆盖 fetch
-        self.assertEqual(out["providers"]["mineru"]["timeout"], 9)
-
-
 class TestLoadConfig(unittest.TestCase):
     def _load_in(self, content=None):
         with tempfile.TemporaryDirectory() as d:
@@ -88,28 +53,6 @@ class TestLoadConfig(unittest.TestCase):
     def test_corrupt_file_falls_back(self):
         cfg = self._load_in("{not json")
         self.assertEqual(cfg["providers"]["doubao"]["count_web"], 10)
-
-    def test_v1_file_auto_migrated_and_saved(self):
-        with tempfile.TemporaryDirectory() as d:
-            old = os.environ.get(cfgmod.CONFIG_DIR_ENV)
-            os.environ[cfgmod.CONFIG_DIR_ENV] = d
-            try:
-                path = os.path.join(d, "config.json")
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump({"doubao": {"api_key": "k"}, "fetch": {"mineru": {"api_key": "m"}}}, f)
-                cfg = cfgmod.load_config()
-                self.assertEqual(cfg["providers"]["doubao"]["api_key"], "k")
-                self.assertEqual(cfg["providers"]["mineru"]["api_key"], "m")
-                # 迁移已写回：文件里不再有旧顶层段
-                with open(path, encoding="utf-8") as f:
-                    saved = json.load(f)
-                self.assertNotIn("doubao", saved)
-                self.assertEqual(saved["providers"]["doubao"]["api_key"], "k")
-            finally:
-                if old is None:
-                    del os.environ[cfgmod.CONFIG_DIR_ENV]
-                else:
-                    os.environ[cfgmod.CONFIG_DIR_ENV] = old
 
 
 class TestParseValue(unittest.TestCase):
