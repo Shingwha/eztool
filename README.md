@@ -12,7 +12,6 @@ eztool search "猫" --image                       # doubao 图片搜索
 eztool search "q" --backend deepseek             # DeepSeek AI 合成回答
 eztool fetch https://example.com/article         # URL → Markdown
 eztool tags                                      # 数据源标签目录
-eztool config import-legacy                      # 导入旧工具配置
 ```
 
 ## 安装
@@ -31,7 +30,7 @@ eztool config set anysearch.api_key  # AnySearch key（可选，匿名可用）
 eztool config test                   # 验证凭证
 ```
 
-配置存于 `~/.config/ezwork-tool/config.json`。旧工具（doubao-websearch-cli 等）的配置可用 `eztool config import-legacy` 一键导入。
+配置存于 `~/.config/ezwork-tool/config.json`（`eztool config path` 查看）。完整配置项见 `SKILL.md`。
 
 ## 后端
 

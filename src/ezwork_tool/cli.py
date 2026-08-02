@@ -88,8 +88,6 @@ def build_parser() -> argparse.ArgumentParser:
     ct = csub.add_parser("test", help="验证已配置后端的凭证（--backend 只测一个）")
     ct.add_argument("--backend", choices=("doubao", "anysearch", "deepseek"))
     ct.set_defaults(func=cmd_config_test)
-    csub.add_parser("import-legacy", help="从旧工具（doubao-websearch 等）导入已有配置") \
-        .set_defaults(func=cmd_config_import)
     return p
 
 
@@ -241,17 +239,6 @@ def cmd_config_test(args: argparse.Namespace) -> None:
             failed = True
     if failed:
         sys.exit(1)
-
-
-def cmd_config_import(args: argparse.Namespace) -> None:
-    cfg = cfgmod.load_config()
-    imported = cfgmod.import_legacy(cfg)
-    if not imported:
-        print("未找到旧工具配置文件")
-        return
-    cfgmod.save_config(cfg)
-    for line in imported:
-        print(line)
 
 
 def _backend_module(name: str):
