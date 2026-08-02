@@ -7,12 +7,13 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import zipfile
 from unittest import mock
 
 from ezwork_tool.fetch import provider as pmod
 from ezwork_tool.fetch.providers.mineru import (
     BASE_URL,
-    MAX_FILE_SIZE,
+    V1_MAX_FILE_SIZE,
     MinerUProvider,
 )
 
@@ -37,6 +38,23 @@ def _md_resp(text: str, status: int = 200) -> mock.MagicMock:
     resp.__enter__.return_value = resp
     resp.__exit__.return_value = False
     return resp
+
+
+def _raw_resp(data: bytes, status: int = 200) -> mock.MagicMock:
+    resp = mock.MagicMock()
+    resp.status = status
+    resp.headers = {}
+    resp.read.return_value = data
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    return resp
+
+
+def _make_zip(md: str = HAPPY_MD) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("uuid/full.md", md)
+    return buf.getvalue()
 
 
 def _http_error(code: int, msg: str = "err") -> urllib.error.HTTPError:
@@ -73,7 +91,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
         try:
             with mock.patch(
                 "ezwork_tool.fetch.providers.mineru.os.path.getsize",
-                return_value=MAX_FILE_SIZE + 1,
+                return_value=V1_MAX_FILE_SIZE + 1,
             ):
                 with self.assertRaises(pmod.FetchError) as ctx:
                     self.provider.convert_file(path)
@@ -232,3 +250,198 @@ class TestRegistered(unittest.TestCase):
         from ezwork_tool.fetch import list_convert_providers, list_providers
         self.assertIn("mineru", list_providers())
         self.assertIn("mineru", list_convert_providers())
+
+
+class TestV1NoToken(unittest.TestCase):
+    """不带 token 时所有提交必须走 v1 Agent 轻量 API 且无 Authorization。"""
+
+    def setUp(self):
+        self.provider = MinerUProvider()
+
+    def test_convert_submits_to_v1_without_auth(self):
+        seen = []
+
+        def fake_urlopen(request, *a, **kw):
+            seen.append(request)
+            return responses.pop(0)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF fake")
+            path = f.name
+        responses = [
+            _resp({"code": 0, "data": {"task_id": "t1", "file_url": "https://oss/s"}}),
+            _md_resp("", status=200),
+            _resp({"code": 0, "data": {"task_id": "t1", "state": "done",
+                                       "markdown_url": "https://cdn/full.md"}}),
+            _md_resp(HAPPY_MD),
+        ]
+        try:
+            with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                self.provider.convert_file(path, timeout=60)
+        finally:
+            os.remove(path)
+        submit = seen[0]
+        self.assertIn("/api/v1/agent/parse/file", submit.full_url)
+        self.assertIsNone(submit.get_header("Authorization"))
+
+
+class TestV4WithToken(unittest.TestCase):
+    """带 token 时走 v4 Precision API（Bearer 认证、zip 结果解压 full.md）。"""
+
+    def setUp(self):
+        self.provider = MinerUProvider(
+            pmod.ProviderOpts(api_keys={"mineru": "test-token"})
+        )
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        self.tmp.write(b"%PDF-1.4 fake")
+        self.tmp.close()
+
+    def tearDown(self):
+        os.remove(self.tmp.name)
+
+    def _run(self, responses):
+        seen = []
+
+        def fake_urlopen(request, *a, **kw):
+            seen.append(request)
+            return responses.pop(0)
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = self.provider.convert_file(self.tmp.name, timeout=60)
+        return result, seen
+
+    def test_convert_v4_batch_flow(self):
+        result, seen = self._run([
+            _resp({"code": 0, "data": {"batch_id": "b1",
+                                       "file_urls": ["https://oss/signed"]}}),
+            _md_resp("", status=200),  # PUT
+            _resp({"code": 0, "data": {"batch_id": "b1", "extract_result": [
+                {"file_name": "x.pdf", "state": "running"}]}}),
+            _resp({"code": 0, "data": {"batch_id": "b1", "extract_result": [
+                {"file_name": "x.pdf", "state": "done",
+                 "full_zip_url": "https://cdn/r.zip"}]}}),
+            _raw_resp(_make_zip()),
+        ])
+        self.assertEqual(result.content, HAPPY_MD)
+        self.assertIn("/api/v4/file-urls/batch", seen[0].full_url)
+        self.assertEqual(seen[0].get_header("Authorization"), "Bearer test-token")
+        payload = json.loads(seen[0].data.decode("utf-8"))
+        self.assertEqual(payload["model_version"], "vlm")
+        self.assertTrue(payload["files"][0]["is_ocr"])
+        self.assertIn("/api/v4/extract-results/batch/b1", seen[2].full_url)
+
+    def test_v4_html_file_uses_mineru_html_model(self):
+        html = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
+        html.write(b"<html><body>hi</body></html>")
+        html.close()
+        try:
+            seen = []
+
+            def fake_urlopen(request, *a, **kw):
+                seen.append(request)
+                return responses.pop(0)
+
+            responses = [
+                _resp({"code": 0, "data": {"batch_id": "b2",
+                                           "file_urls": ["https://oss/signed"]}}),
+                _md_resp("", status=200),
+                _resp({"code": 0, "data": {"batch_id": "b2", "extract_result": [
+                    {"file_name": "x.html", "state": "done",
+                     "full_zip_url": "https://cdn/r.zip"}]}}),
+                _raw_resp(_make_zip()),
+            ]
+            with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                self.provider.convert_file(html.name, timeout=60)
+        finally:
+            os.remove(html.name)
+        payload = json.loads(seen[0].data.decode("utf-8"))
+        self.assertEqual(payload["model_version"], "MinerU-HTML")
+
+    def test_v4_fetch_html_url_uses_mineru_html_model(self):
+        seen = []
+
+        def fake_urlopen(request, *a, **kw):
+            seen.append(request)
+            return responses.pop(0)
+
+        responses = [
+            _resp({"code": 0, "data": {"task_id": "t9"}}),
+            _resp({"code": 0, "data": {"task_id": "t9", "state": "done",
+                                       "full_zip_url": "https://cdn/r.zip"}}),
+            _raw_resp(_make_zip()),
+        ]
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = self.provider.fetch(
+                "https://example.com/page.html?x=1", timeout=60
+            )
+        self.assertEqual(result.content, HAPPY_MD)
+        self.assertIn("/api/v4/extract/task", seen[0].full_url)
+        payload = json.loads(seen[0].data.decode("utf-8"))
+        self.assertEqual(payload["model_version"], "MinerU-HTML")
+        self.assertTrue(payload["is_ocr"])
+
+    def test_v4_fetch_pdf_url_uses_vlm(self):
+        seen = []
+
+        def fake_urlopen(request, *a, **kw):
+            seen.append(request)
+            return responses.pop(0)
+
+        responses = [
+            _resp({"code": 0, "data": {"task_id": "t8"}}),
+            _resp({"code": 0, "data": {"task_id": "t8", "state": "done",
+                                       "full_zip_url": "https://cdn/r.zip"}}),
+            _raw_resp(_make_zip()),
+        ]
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            self.provider.fetch("https://example.com/doc.pdf", timeout=60)
+        payload = json.loads(seen[0].data.decode("utf-8"))
+        self.assertEqual(payload["model_version"], "vlm")
+
+    def test_v4_failed_state(self):
+        with mock.patch("urllib.request.urlopen", side_effect=[
+            _resp({"code": 0, "data": {"batch_id": "b3",
+                                       "file_urls": ["https://oss/signed"]}}),
+            _md_resp("", status=200),
+            _resp({"code": 0, "data": {"batch_id": "b3", "extract_result": [
+                {"file_name": "x.pdf", "state": "failed",
+                 "err_msg": "convert failed"}]}}),
+        ]):
+            with self.assertRaises(pmod.FetchError) as ctx:
+                self.provider.convert_file(self.tmp.name, timeout=60)
+        self.assertIn("convert failed", str(ctx.exception))
+
+    def test_v4_zip_without_full_md_is_empty(self):
+        with mock.patch("urllib.request.urlopen", side_effect=[
+            _resp({"code": 0, "data": {"batch_id": "b4",
+                                       "file_urls": ["https://oss/signed"]}}),
+            _md_resp("", status=200),
+            _resp({"code": 0, "data": {"batch_id": "b4", "extract_result": [
+                {"file_name": "x.pdf", "state": "done",
+                 "full_zip_url": "https://cdn/r.zip"}]}}),
+            _raw_resp(_make_zip(md="")),
+        ]):
+            with self.assertRaises(pmod.FetchError) as ctx:
+                self.provider.convert_file(self.tmp.name, timeout=60)
+        self.assertEqual(ctx.exception.category, pmod.CATEGORY_EMPTY)
+
+    def test_v4_allows_larger_files_and_doc(self):
+        doc = tempfile.NamedTemporaryFile(suffix=".doc", delete=False)
+        doc.close()
+        try:
+            with mock.patch(
+                "ezwork_tool.fetch.providers.mineru.os.path.getsize",
+                return_value=V1_MAX_FILE_SIZE + 1,  # 11MB：v1 超限但 v4 允许
+            ), mock.patch("urllib.request.urlopen", side_effect=[
+                _resp({"code": 0, "data": {"batch_id": "b5",
+                                           "file_urls": ["https://oss/signed"]}}),
+                _md_resp("", status=200),
+                _resp({"code": 0, "data": {"batch_id": "b5", "extract_result": [
+                    {"file_name": "x.doc", "state": "done",
+                     "full_zip_url": "https://cdn/r.zip"}]}}),
+                _raw_resp(_make_zip()),
+            ]):
+                result = self.provider.convert_file(doc.name, timeout=60)
+            self.assertEqual(result.content, HAPPY_MD)
+        finally:
+            os.remove(doc.name)

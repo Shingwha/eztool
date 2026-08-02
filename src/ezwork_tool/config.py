@@ -37,6 +37,7 @@ SECRET_KEYS = frozenset({
     "doubao.api_key", "doubao.ak", "doubao.sk",
     "anysearch.api_key", "deepseek.api_key",
     "fetch.firecrawl.api_key", "fetch.jina.api_key",
+    "fetch.mineru.api_key", "convert.mineru.api_key",
 })
 
 # 每个可设键的说明（config set 提示 / --help 用）
@@ -71,6 +72,8 @@ KEY_HINTS = {
     "convert.markdown.timeout": "markdown.new 文件转换超时秒数",
     "convert.mineru.timeout": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）",
     "fetch.mineru.timeout": "MinerU URL 提取任务总超时秒数（默认 300）",
+    "convert.mineru.api_key": "MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML）；不配走 v1 轻量 API（≤10MB/20页）",
+    "fetch.mineru.api_key": "MinerU Token（可选），与 convert.mineru.api_key 二选一配置即可，自动互通",
 }
 
 

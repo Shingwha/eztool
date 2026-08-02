@@ -1,28 +1,29 @@
-"""mineru.net provider — MinerU Agent Lightweight Extract API (document → Markdown).
+"""mineru.net provider — MinerU document extraction (PDF/Office/images → Markdown).
 
-Two capabilities, one free service (no login, no Token; IP rate-limited):
-  - convert_file: POST /api/v1/agent/parse/file (signed PUT upload) → poll → Markdown
-  - fetch:        POST /api/v1/agent/parse/url  (remote file URL)   → poll → Markdown
+Two API tiers behind one provider, selected automatically by token:
 
-Async flow for both modes: submit task → (upload) → poll
-GET /api/v1/agent/parse/{task_id} → when state=done download markdown_url.
+  - v1 Agent Lightweight API (no token): free, IP rate-limited, ≤10 MB / 20
+    pages, single file, Markdown only. Formats: pdf, images, docx, pptx, xlsx.
+  - v4 Precision Extract API (Bearer token): ≤200 MB / 200 pages, batch,
+    output is a zip (Markdown + JSON). Formats: pdf, doc/docx, ppt/pptx,
+    xls/xlsx, images, html (html needs model MinerU-HTML).
 
-Limits: 10 MB per file, 20 pages, single file per request. Formats: pdf,
-png/jpg/jpeg/jp2/webp/gif/bmp, docx, pptx, xlsx. Markdown output only.
+Configure ``mineru.api_key`` (convert.mineru.api_key / fetch.mineru.api_key)
+to enable v4; without a token the provider falls back to v1.
 
-This is the lightweight public API. The Precision Extract API
-(/api/v4/*, Bearer Token, 200MB, batch, zip output incl. JSON) is not
-implemented — the lightweight one needs no credentials and returns
-Markdown directly, which fits the chain's contract.
+Async flow (both tiers): submit task → (signed PUT upload) → poll status →
+download result (v1: markdown_url; v4: zip → extract full.md).
 
 Service docs: https://mineru.net/apiManage/docs
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import time
 import urllib.request
+import zipfile
 
 from ..provider import (
     CATEGORY_EMPTY,
@@ -36,23 +37,32 @@ from ..provider import (
 )
 
 BASE_URL = "https://mineru.net"
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB service limit
+V1_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+V4_MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 
-# Server-authoritative list (lightweight API; note: doc/ppt/xls not included).
-SUPPORTED_EXTENSIONS = frozenset({
+# Server-authoritative lists (note: v1 does not include doc/ppt/xls/html).
+V1_SUPPORTED_EXTENSIONS = frozenset({
     ".pdf", ".png", ".jpg", ".jpeg", ".jp2", ".webp", ".gif", ".bmp",
     ".docx", ".pptx", ".xlsx",
 })
+V4_SUPPORTED_EXTENSIONS = V1_SUPPORTED_EXTENSIONS | frozenset({
+    ".doc", ".ppt", ".xls", ".html",
+})
 
 POLL_INTERVAL = 3  # seconds between status polls
-_POLL_STATES = {"waiting-file", "uploading", "pending", "running"}
+_POLL_STATES = {"waiting-file", "uploading", "pending", "running", "converting"}
 # Submission accepted but the request itself was wrong — not retriable.
-_INVALID_CODES = {-30001, -30002, -30003, -30004}
+_INVALID_CODES = {-30001, -30002, -30003, -30004, -500, -10002}
 
 
 @register
 class MinerUProvider(Provider):
     name = "mineru"
+
+    @property
+    def _v4(self) -> bool:
+        """带 token 走 v4 Precision API；不带 token 走 v1 Agent 轻量 API。"""
+        return bool(self.api_key)
 
     # -- convert_file: local file → Markdown -------------------------------
 
@@ -63,21 +73,29 @@ class MinerUProvider(Provider):
         download); extraction is asynchronous so this is not a single
         HTTP timeout.
         """
-        if not os.path.isfile(path):
-            raise FetchError(f"file not found: {path}", CATEGORY_INVALID)
-        ext = os.path.splitext(path)[1].lower()
-        if ext not in SUPPORTED_EXTENSIONS:
-            supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-            raise FetchError(
-                f"unsupported file type '{ext}' (supported: {supported})",
-                CATEGORY_INVALID,
-            )
-        size = os.path.getsize(path)
-        if size > MAX_FILE_SIZE:
-            raise FetchError(
-                f"file too large: {size} bytes (max {MAX_FILE_SIZE})", CATEGORY_INVALID
-            )
+        ext = self._check_local_file(path)
+        if self._v4:
+            return self._convert_v4(path, ext, timeout)
+        return self._convert_v1(path, timeout)
 
+    # -- fetch: remote file URL → Markdown ---------------------------------
+
+    def fetch(self, url: str, timeout: int = 300) -> FetchResult:
+        """Submit a remote file URL for extraction and return the Markdown.
+
+        Overrides the base synchronous fetch: the service is async
+        (submit → poll → download), so ``timeout`` is the overall budget.
+        v1 only accepts file URLs (PDF/Office/images); v4 additionally
+        accepts HTML URLs (model MinerU-HTML). Other URLs are rejected by
+        the service and the chain moves on.
+        """
+        if self._v4:
+            return self._fetch_v4(url, timeout)
+        return self._fetch_v1(url, timeout)
+
+    # -- v1: Agent Lightweight API (no token) -------------------------------
+
+    def _convert_v1(self, path: str, timeout: int) -> FetchResult:
         t0 = time.monotonic()
 
         # 1. Request a signed OSS upload URL for this file.
@@ -95,27 +113,12 @@ class MinerUProvider(Provider):
                 f"{self.name} response missing task_id/file_url", CATEGORY_EMPTY
             )
 
-        # 2. PUT the raw bytes to the signed URL.
-        # OSS 签名校验要求请求不带 Content-Type；urllib 在带 data 时会自动补
-        # application/x-www-form-urlencoded，导致 SignatureDoesNotMatch (403)。
-        # 显式加一个空值 Content-Type 头可阻止 urllib 补默认头（OSS 视空值为无）。
-        with open(path, "rb") as f:
-            file_bytes = f.read()
-        req = urllib.request.Request(file_url, data=file_bytes, method="PUT")
-        req.add_header("User-Agent", self.build_headers().get("User-Agent", ""))
-        req.add_header("Content-Type", "")
-        try:
-            with urllib.request.urlopen(req, timeout=min(60, timeout)) as resp:
-                put_status = resp.status
-        except Exception as e:
-            raise self._map_error(e, min(60, timeout)) from e
-        if put_status not in (200, 201):
-            raise FetchError(
-                f"upload failed: HTTP {put_status}", CATEGORY_HTTP, put_status
-            )
+        self._put_file(file_url, path, timeout)
 
-        # 3. Poll until done/failed, then download the Markdown.
-        content = self._poll_and_download(task_id, timeout=timeout)
+        done = self._poll_status(
+            f"{BASE_URL}/api/v1/agent/parse/{task_id}", timeout
+        )
+        content = self._download_text(done.get("markdown_url"), timeout)
         return FetchResult(
             provider=self.name,
             content=content,
@@ -123,16 +126,7 @@ class MinerUProvider(Provider):
             elapsed=round(time.monotonic() - t0, 3),
         )
 
-    # -- fetch: remote file URL → Markdown ---------------------------------
-
-    def fetch(self, url: str, timeout: int = 300) -> FetchResult:
-        """Submit a remote file URL for extraction and return the Markdown.
-
-        Overrides the base synchronous fetch: the service is async
-        (submit → poll → download), so ``timeout`` is the overall budget.
-        Only file URLs (PDF/Office/images) are supported; HTML pages are
-        rejected by the service (err -30002) and the chain moves on.
-        """
+    def _fetch_v1(self, url: str, timeout: int) -> FetchResult:
         t0 = time.monotonic()
         _, _, raw = self._post_json(
             f"{BASE_URL}/api/v1/agent/parse/url",
@@ -144,7 +138,90 @@ class MinerUProvider(Provider):
         if not task_id:
             raise FetchError(f"{self.name} response missing task_id", CATEGORY_EMPTY)
 
-        content = self._poll_and_download(task_id, timeout=timeout)
+        done = self._poll_status(
+            f"{BASE_URL}/api/v1/agent/parse/{task_id}", timeout
+        )
+        content = self._download_text(done.get("markdown_url"), timeout)
+        return FetchResult(
+            provider=self.name,
+            content=content,
+            url=url,
+            elapsed=round(time.monotonic() - t0, 3),
+        )
+
+    # -- v4: Precision Extract API (Bearer token) ---------------------------
+
+    def _convert_v4(self, path: str, ext: str, timeout: int) -> FetchResult:
+        t0 = time.monotonic()
+
+        # 1. Request a signed OSS upload URL (batch endpoint, one file).
+        # is_ocr=True 默认开启 OCR；HTML 源文件必须用 MinerU-HTML 模型。
+        payload = {
+            "files": [{"name": os.path.basename(path), "is_ocr": True}],
+            "model_version": "MinerU-HTML" if ext == ".html" else "vlm",
+            "enable_formula": True,
+            "enable_table": True,
+            "language": "ch",
+        }
+        _, _, raw = self._post_json(
+            f"{BASE_URL}/api/v4/file-urls/batch", payload, timeout=min(30, timeout)
+        )
+        data = self._parse_task_response(raw)
+        batch_id = data.get("batch_id")
+        file_urls = data.get("file_urls")
+        if not batch_id or not isinstance(file_urls, list) or not file_urls:
+            raise FetchError(
+                f"{self.name} response missing batch_id/file_urls", CATEGORY_EMPTY
+            )
+
+        # 2. Upload; the service auto-submits the extract task afterwards.
+        self._put_file(file_urls[0], path, timeout)
+
+        # 3. Poll the batch result; download the zip and extract full.md.
+        done = self._poll_status(
+            f"{BASE_URL}/api/v4/extract-results/batch/{batch_id}", timeout
+        )
+        results = done.get("extract_result") or []
+        zip_url = results[0].get("full_zip_url") if results else None
+        if not zip_url:
+            raise FetchError(
+                f"{self.name} result missing full_zip_url", CATEGORY_EMPTY
+            )
+        content = self._download_zip_markdown(zip_url, timeout)
+        return FetchResult(
+            provider=self.name,
+            content=content,
+            url=path,
+            elapsed=round(time.monotonic() - t0, 3),
+        )
+
+    def _fetch_v4(self, url: str, timeout: int) -> FetchResult:
+        t0 = time.monotonic()
+
+        # HTML URLs need the MinerU-HTML model; everything else uses vlm.
+        model = "MinerU-HTML" if url.lower().split("?", 1)[0].endswith(
+            (".html", ".htm")
+        ) else "vlm"
+        payload = {
+            "url": url,
+            "model_version": model,
+            "is_ocr": True,
+            "enable_formula": True,
+            "enable_table": True,
+            "language": "ch",
+        }
+        _, _, raw = self._post_json(
+            f"{BASE_URL}/api/v4/extract/task", payload, timeout=min(30, timeout)
+        )
+        data = self._parse_task_response(raw)
+        task_id = data.get("task_id")
+        if not task_id:
+            raise FetchError(f"{self.name} response missing task_id", CATEGORY_EMPTY)
+
+        done = self._poll_status(
+            f"{BASE_URL}/api/v4/extract/task/{task_id}", timeout
+        )
+        content = self._download_zip_markdown(done.get("full_zip_url"), timeout)
         return FetchResult(
             provider=self.name,
             content=content,
@@ -154,18 +231,79 @@ class MinerUProvider(Provider):
 
     # -- shared helpers -----------------------------------------------------
 
+    def _check_local_file(self, path: str) -> str:
+        """Local pre-checks for the active tier; returns the extension."""
+        if not os.path.isfile(path):
+            raise FetchError(f"file not found: {path}", CATEGORY_INVALID)
+        ext = os.path.splitext(path)[1].lower()
+        supported = V4_SUPPORTED_EXTENSIONS if self._v4 else V1_SUPPORTED_EXTENSIONS
+        if ext not in supported:
+            raise FetchError(
+                f"unsupported file type '{ext}' (supported: "
+                f"{', '.join(sorted(supported))})",
+                CATEGORY_INVALID,
+            )
+        max_size = V4_MAX_FILE_SIZE if self._v4 else V1_MAX_FILE_SIZE
+        size = os.path.getsize(path)
+        if size > max_size:
+            raise FetchError(
+                f"file too large: {size} bytes (max {max_size})", CATEGORY_INVALID
+            )
+        return ext
+
+    def _auth_headers(self) -> dict:
+        """Common headers; v4 adds the Bearer token."""
+        headers = {"User-Agent": self.build_headers().get("User-Agent", "")}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
     def _post_json(self, target: str, payload: dict, timeout: int):
         """POST JSON body; returns (status, headers, body bytes)."""
         req = urllib.request.Request(
             target, data=json.dumps(payload).encode("utf-8"), method="POST"
         )
         req.add_header("Content-Type", "application/json")
-        req.add_header("User-Agent", self.build_headers().get("User-Agent", ""))
+        for k, v in self._auth_headers().items():
+            req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.status, resp.headers, resp.read()
         except Exception as e:
             raise self._map_error(e, timeout) from e
+
+    def _get_json(self, target: str, timeout: float) -> bytes:
+        """Authorized GET (Bearer when v4); returns raw body bytes."""
+        req = urllib.request.Request(target)
+        for k, v in self._auth_headers().items():
+            req.add_header(k, v)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except Exception as e:
+            raise self._map_error(e, timeout) from e
+
+    def _put_file(self, url: str, path: str, timeout: int) -> None:
+        """PUT the file bytes to the signed OSS URL.
+
+        OSS 签名校验要求请求不带 Content-Type；urllib 在带 data 时会自动补
+        application/x-www-form-urlencoded，导致 SignatureDoesNotMatch (403)。
+        显式加一个空值 Content-Type 头可阻止 urllib 补默认头（OSS 视空值为无）。
+        """
+        with open(path, "rb") as f:
+            file_bytes = f.read()
+        req = urllib.request.Request(url, data=file_bytes, method="PUT")
+        req.add_header("User-Agent", self.build_headers().get("User-Agent", ""))
+        req.add_header("Content-Type", "")
+        try:
+            with urllib.request.urlopen(req, timeout=min(60, timeout)) as resp:
+                put_status = resp.status
+        except Exception as e:
+            raise self._map_error(e, min(60, timeout)) from e
+        if put_status not in (200, 201):
+            raise FetchError(
+                f"upload failed: HTTP {put_status}", CATEGORY_HTTP, put_status
+            )
 
     def _parse_task_response(self, raw: bytes) -> dict:
         """Validate the {code, msg, data} envelope; return data."""
@@ -186,8 +324,12 @@ class MinerUProvider(Provider):
             raise FetchError(f"{self.name} response missing data", CATEGORY_EMPTY)
         return data
 
-    def _poll_and_download(self, task_id: str, timeout: int) -> str:
-        """Poll the task state within the budget; download Markdown when done."""
+    def _poll_status(self, status_url: str, timeout: int) -> dict:
+        """Poll until done/failed; returns the final data dict.
+
+        v4 batch results nest state under ``extract_result[0]`` — both
+        shapes are unwrapped here.
+        """
         deadline = time.monotonic() + max(timeout, 1)
 
         def _remaining() -> float:
@@ -199,39 +341,55 @@ class MinerUProvider(Provider):
                     f"timed out after {int(timeout)}s waiting for extract task",
                     CATEGORY_TIMEOUT,
                 )
-            status, _, raw = self._http_get(
-                f"{BASE_URL}/api/v1/agent/parse/{task_id}",
-                timeout=min(20.0, _remaining()),
-            )
+            raw = self._get_json(status_url, timeout=min(20.0, _remaining()))
             data = self._parse_task_response(raw)
+
             state = data.get("state")
+            if state is None:
+                results = data.get("extract_result")
+                if isinstance(results, list) and results:
+                    state = results[0].get("state")
 
             if state == "done":
-                if _remaining() <= 0:
-                    raise FetchError(
-                        f"timed out after {int(timeout)}s waiting for extract task",
-                        CATEGORY_TIMEOUT,
-                    )
-                md_url = data.get("markdown_url")
-                if not md_url:
-                    raise FetchError(
-                        f"{self.name} task done but no markdown_url", CATEGORY_EMPTY
-                    )
-                status, _, body = self._http_get(
-                    md_url, timeout=min(20.0, _remaining())
-                )
-                text = body.decode("utf-8", errors="replace").strip()
-                if not text:
-                    raise FetchError(
-                        f"{self.name} returned empty content", CATEGORY_EMPTY
-                    )
-                return text
-
+                return data
             if state == "failed":
-                raise FetchError(
-                    data.get("err_msg") or "extract task failed", CATEGORY_HTTP
-                )
-
+                err = data.get("err_msg")
+                if not err:
+                    results = data.get("extract_result")
+                    if isinstance(results, list) and results:
+                        err = results[0].get("err_msg")
+                raise FetchError(err or "extract task failed", CATEGORY_HTTP)
             if state not in _POLL_STATES:
                 raise FetchError(f"unknown task state '{state}'", CATEGORY_HTTP)
             time.sleep(min(POLL_INTERVAL, max(0.0, _remaining())))
+
+    def _download_text(self, md_url: str, timeout: int) -> str:
+        """Download a Markdown text URL (v1 CDN result)."""
+        if not md_url:
+            raise FetchError(f"{self.name} task done but no markdown_url", CATEGORY_EMPTY)
+        status, _, body = self._http_get(md_url, timeout=min(60, timeout))
+        text = body.decode("utf-8", errors="replace").strip()
+        if not text:
+            raise FetchError(f"{self.name} returned empty content", CATEGORY_EMPTY)
+        return text
+
+    def _download_zip_markdown(self, zip_url: str, timeout: int) -> str:
+        """Download the v4 result zip and extract the full.md Markdown."""
+        if not zip_url:
+            raise FetchError(f"{self.name} task done but no full_zip_url", CATEGORY_EMPTY)
+        status, _, body = self._http_get(zip_url, timeout=min(120, timeout))
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as zf:
+                names = [n for n in zf.namelist() if n.endswith("full.md")]
+                if not names:
+                    raise FetchError(
+                        f"{self.name} result zip has no full.md", CATEGORY_EMPTY
+                    )
+                # 多文件 zip（罕见）取内容最大的 full.md。
+                name = max(names, key=lambda n: zf.getinfo(n).file_size)
+                text = zf.read(name).decode("utf-8", errors="replace").strip()
+        except zipfile.BadZipFile:
+            raise FetchError(f"{self.name} result zip is corrupt", CATEGORY_EMPTY) from None
+        if not text:
+            raise FetchError(f"{self.name} returned empty markdown", CATEGORY_EMPTY)
+        return text

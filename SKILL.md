@@ -58,7 +58,7 @@ eztool --version
 | `doubao` | `doubao.api_key`，或 `doubao.ak` + `doubao.sk` | 无法使用 doubao 后端（auto 会跳过它） |
 | `anysearch` | 无 | 可用（匿名模式，按 IP 限速）；配 `anysearch.api_key` 可提高配额 |
 | `deepseek` | `deepseek.api_key` | 无法使用 deepseek 后端 |
-| `fetch` / `convert` | 无 | 可用（firecrawl→markdown.new→jina 抓取、markdown.new→MinerU 转换，全免费无 Token） |
+| `fetch` / `convert` | 无 | 可用（firecrawl→markdown.new→jina 抓取、markdown.new→MinerU 转换，全免费无 Token）；配 `mineru.api_key` 后 MinerU 自动升级 v4 Precision API |
 
 ### 全部配置项
 
@@ -89,7 +89,9 @@ eztool --version
 | `convert.timeout` | 60 | 文件转换默认超时（秒） |
 | `convert.markdown.timeout` | 60 | markdown.new 文件转换超时（秒） |
 | `convert.mineru.timeout` | 300 | MinerU 提取任务总超时（秒，提交+轮询+下载） |
+| `convert.mineru.api_key` | 空 | MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML），不配走 v1 轻量（≤10MB/20页）；与 fetch.mineru.api_key 任配一处即可互通 |
 | `fetch.mineru.timeout` | 300 | MinerU URL 提取任务总超时（秒，`--providers mineru` 时生效） |
+| `fetch.mineru.api_key` | 空 | MinerU Token（可选），与 convert.mineru.api_key 二选一 |
 
 ## 搜索：三个后端能搜什么
 
@@ -138,7 +140,7 @@ eztool tags
 ## Workflow for the Agent
 
 1. **搜索**：直接 `eztool search "<query>"`。默认 auto 路由即可；用户点名豆包/DeepSeek、需要图片或专业数据源时再显式加参数。
-2. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。本地文件（PDF/DOCX/XLSX/图片/CSV/JSON 等）用 `eztool convert <file>` 转 Markdown，`--out` 可写文件；不支持的文件类型/超 10MB 会在本地快速报错（exit 1）。markdown.new 不支持的格式（如 PPTX、GIF/BMP）或转换失败会自动回退到 MinerU（免费无 Token，异步提取，默认开启 OCR，慢但识别质量高，PDF 需 ≤20 页）。
+2. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。本地文件（PDF/DOCX/XLSX/图片/CSV/JSON 等）用 `eztool convert <file>` 转 Markdown，`--out` 可写文件；不支持的文件类型/超 10MB 会在本地快速报错（exit 1）。markdown.new 不支持的格式（如 PPTX、GIF/BMP）或转换失败会自动回退到 MinerU（免费无 Token，异步提取，默认开启 OCR，PDF 需 ≤20 页；配置 `convert.mineru.api_key` Token 后自动升级 v4：≤200MB/200 页/支持 doc/ppt/xls/html，输出 zip 自动解出 full.md）。
 3. **专业搜索**：先 `eztool tags` 看标签清单，再 `--tag` 定向；部分标签还需 `--params '{"key":"value"}'` 补充参数（如 `code.doc` 需要 `library`）。
 4. **凭证缺失**：报 `未配置 XX 凭证` 时，引导用户 `eztool config set <key>`，**绝不硬编码密钥**；用 `eztool config test` 验证。
 5. **失败处理**：exit 1 = 业务失败（无结果 / API 错误），exit 2 = 用法或凭证问题；错误在 stderr，格式 `error: <原因>` + `code: <语义码>`。

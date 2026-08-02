@@ -71,6 +71,29 @@ def _chain_providers(cfg_section: dict, opts: dict, defaults: list[str]) -> list
     return providers
 
 
+def _sync_mineru_key(cfg: dict) -> None:
+    """mineru token 只需在 convert 或 fetch 任一段配置：缺失段自动补齐。
+
+    （原地修改 cfg；两段都没有 key 则不做任何事。）
+    """
+    key = None
+    for sec_name in ("fetch", "convert"):
+        sec = cfg.get(sec_name)
+        if isinstance(sec, dict):
+            mineru = sec.get("mineru")
+            if isinstance(mineru, dict) and mineru.get("api_key"):
+                key = mineru["api_key"]
+                break
+    if not key:
+        return
+    for sec_name in ("fetch", "convert"):
+        sec = cfg.get(sec_name)
+        if not isinstance(sec, dict):
+            continue
+        mineru = sec.setdefault("mineru", {})
+        mineru.setdefault("api_key", key)
+
+
 def fetch(cfg: dict, url: str, opts: dict | None = None) -> FetchResult:
     """按回退链抓取 URL 转 Markdown。
 
@@ -83,6 +106,7 @@ def fetch(cfg: dict, url: str, opts: dict | None = None) -> FetchResult:
     message 汇总各 provider 失败原因（chain 的 stderr 日志照常打印明细）。
     """
     opts = opts or {}
+    _sync_mineru_key(cfg)
     fetch_cfg = cfg.get("fetch") or {}
     if not isinstance(fetch_cfg, dict):
         fetch_cfg = {}
@@ -119,6 +143,7 @@ def convert(cfg: dict, path: str, opts: dict | None = None) -> FetchResult:
     全部失败时抛 BackendError(message, code="convert_failed")。
     """
     opts = opts or {}
+    _sync_mineru_key(cfg)
     conv_cfg = cfg.get("convert") or {}
     if not isinstance(conv_cfg, dict):
         conv_cfg = {}
