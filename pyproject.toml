@@ -1,6 +1,6 @@
 [project]
 name = "ezwork-tool"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unified CLI: web/image search (Doubao / AnySearch / DeepSeek) + URL-to-Markdown fetch. One tool, one skill."
 readme = "README.md"
 requires-python = ">=3.10"
