@@ -27,8 +27,9 @@ DEFAULTS: dict[str, Any] = {
         "jina": {"api_key": None, "timeout": 10},
     },
     "convert": {
-        "providers": ["markdown"], "timeout": 60,
+        "providers": ["markdown", "mineru"], "timeout": 60,
         "markdown": {"timeout": 60},
+        "mineru": {"timeout": 300},
     },
 }
 
@@ -65,9 +66,11 @@ KEY_HINTS = {
     "fetch.markdown.timeout": "markdown.new 超时秒数",
     "fetch.jina.api_key": "Jina API Key（可选）",
     "fetch.jina.timeout": "jina 超时秒数",
-    "convert.providers": "文件转 Markdown 回退链，逗号分隔：markdown",
+    "convert.providers": "文件转 Markdown 回退链，逗号分隔：markdown,mineru",
     "convert.timeout": "文件转换默认超时秒数",
     "convert.markdown.timeout": "markdown.new 文件转换超时秒数",
+    "convert.mineru.timeout": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）",
+    "fetch.mineru.timeout": "MinerU URL 提取任务总超时秒数（默认 300）",
 }
 
 

@@ -23,7 +23,7 @@ from .provider import (
 __all__ = ["fetch", "convert", "list_providers", "list_convert_providers", "FetchResult"]
 
 # 各 provider 段缺省超时（与 config.DEFAULTS 一致）；未配置段的 provider 回退全局超时
-DEFAULT_TIMEOUTS = {"firecrawl": 60, "markdown": 30, "jina": 10}
+DEFAULT_TIMEOUTS = {"firecrawl": 60, "markdown": 30, "jina": 10, "mineru": 300}
 DEFAULT_PROVIDERS = ["firecrawl", "markdown", "jina"]
 DEFAULT_CONVERT_PROVIDERS = ["markdown"]
 

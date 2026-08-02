@@ -5,6 +5,6 @@ To add a new service: drop a module here that subclasses Provider with
 """
 from __future__ import annotations
 
-from . import firecrawl, jina_reader, markdown_new  # noqa: F401  (side-effect: register)
+from . import firecrawl, jina_reader, markdown_new, mineru  # noqa: F401  (side-effect: register)
 
-__all__ = ["firecrawl", "jina_reader", "markdown_new"]
+__all__ = ["firecrawl", "jina_reader", "markdown_new", "mineru"]

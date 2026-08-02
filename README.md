@@ -11,8 +11,9 @@ eztool search "AAPL" --tag finance.quote         # anysearch 数据源
 eztool search "猫" --image                       # doubao 图片搜索
 eztool search "q" --backend deepseek             # DeepSeek AI 合成回答
 eztool fetch https://example.com/article         # URL → Markdown
-eztool convert report.pdf                        # 本地文件 → Markdown（22 种格式）
+eztool convert report.pdf                        # 本地文件 → Markdown（markdown.new→MinerU 回退链）
 eztool convert 报告.docx --out report.md          # 写入文件而非 stdout
+eztool convert 演示.pptx                          # PPTX：markdown.new 不支持，自动走 MinerU
 eztool tags                                      # 数据源标签目录
 ```
 
