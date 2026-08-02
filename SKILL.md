@@ -138,7 +138,7 @@ eztool tags
 ## Workflow for the Agent
 
 1. **搜索**：直接 `eztool search "<query>"`。默认 auto 路由即可；用户点名豆包/DeepSeek、需要图片或专业数据源时再显式加参数。
-2. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。本地文件（PDF/DOCX/XLSX/图片/CSV/JSON 等）用 `eztool convert <file>` 转 Markdown，`--out` 可写文件；不支持的文件类型/超 10MB 会在本地快速报错（exit 1）。markdown.new 不支持的格式（如 PPTX、GIF/BMP）或转换失败会自动回退到 MinerU（免费无 Token，异步提取，慢但识别质量高，PDF 需 ≤20 页）。
+2. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。本地文件（PDF/DOCX/XLSX/图片/CSV/JSON 等）用 `eztool convert <file>` 转 Markdown，`--out` 可写文件；不支持的文件类型/超 10MB 会在本地快速报错（exit 1）。markdown.new 不支持的格式（如 PPTX、GIF/BMP）或转换失败会自动回退到 MinerU（免费无 Token，异步提取，默认开启 OCR，慢但识别质量高，PDF 需 ≤20 页）。
 3. **专业搜索**：先 `eztool tags` 看标签清单，再 `--tag` 定向；部分标签还需 `--params '{"key":"value"}'` 补充参数（如 `code.doc` 需要 `library`）。
 4. **凭证缺失**：报 `未配置 XX 凭证` 时，引导用户 `eztool config set <key>`，**绝不硬编码密钥**；用 `eztool config test` 验证。
 5. **失败处理**：exit 1 = 业务失败（无结果 / API 错误），exit 2 = 用法或凭证问题；错误在 stderr，格式 `error: <原因>` + `code: <语义码>`。

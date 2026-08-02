@@ -133,6 +133,27 @@ class TestConvertFileFlow(unittest.TestCase):
         self.assertEqual(put_req.get_method(), "PUT")
         self.assertEqual(put_req.get_header("Content-type"), "")
 
+    def test_submit_payload_has_is_ocr_true(self):
+        """is_ocr 默认开启（扫描件 PDF 也走 OCR），提交 payload 必须带 is_ocr: true。"""
+        seen = []
+
+        def fake_urlopen(request, *a, **kw):
+            seen.append(request)
+            return responses.pop(0)
+
+        responses = [
+            _resp({"code": 0, "data": {"task_id": "t1", "file_url": "https://oss/signed"}}),
+            _md_resp("", status=200),
+            _resp({"code": 0, "data": {"task_id": "t1", "state": "done",
+                                       "markdown_url": "https://cdn/full.md"}}),
+            _md_resp(HAPPY_MD),
+        ]
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            self.provider.convert_file(self.tmp.name, timeout=60)
+        submit = json.loads(seen[0].data.decode("utf-8"))
+        self.assertEqual(submit["file_name"], os.path.basename(self.tmp.name))
+        self.assertTrue(submit["is_ocr"])
+
     def test_polls_until_done(self):
         result = self._flow_ok(extra_responses=[
             _resp({"code": 0, "data": {"task_id": "t1", "state": "running"}}),
@@ -178,16 +199,25 @@ class TestFetchFlow(unittest.TestCase):
         self.provider = MinerUProvider()
 
     def test_url_success(self):
+        seen = []
+
+        def fake_urlopen(request, *a, **kw):
+            seen.append(request)
+            return responses.pop(0)
+
         responses = [
             _resp({"code": 0, "data": {"task_id": "t2"}}),
             _resp({"code": 0, "data": {"task_id": "t2", "state": "done",
                                        "markdown_url": "https://cdn/full.md"}}),
             _md_resp(HAPPY_MD),
         ]
-        with mock.patch("urllib.request.urlopen", side_effect=responses):
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
             result = self.provider.fetch("https://example.com/doc.pdf", timeout=60)
         self.assertEqual(result.content, HAPPY_MD)
         self.assertEqual(result.url, "https://example.com/doc.pdf")
+        submit = json.loads(seen[0].data.decode("utf-8"))
+        self.assertEqual(submit["url"], "https://example.com/doc.pdf")
+        self.assertTrue(submit["is_ocr"])
 
     def test_http_429_maps_to_http(self):
         with mock.patch("urllib.request.urlopen", side_effect=_http_error(429)):

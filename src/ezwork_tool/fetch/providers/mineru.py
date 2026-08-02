@@ -81,9 +81,10 @@ class MinerUProvider(Provider):
         t0 = time.monotonic()
 
         # 1. Request a signed OSS upload URL for this file.
+        # is_ocr=True：扫描件/图片型 PDF 也做 OCR 识别（仅对 PDF 生效）。
         _, _, raw = self._post_json(
             f"{BASE_URL}/api/v1/agent/parse/file",
-            {"file_name": os.path.basename(path)},
+            {"file_name": os.path.basename(path), "is_ocr": True},
             timeout=min(30, timeout),
         )
         data = self._parse_task_response(raw)
@@ -134,7 +135,9 @@ class MinerUProvider(Provider):
         """
         t0 = time.monotonic()
         _, _, raw = self._post_json(
-            f"{BASE_URL}/api/v1/agent/parse/url", {"url": url}, timeout=min(30, timeout)
+            f"{BASE_URL}/api/v1/agent/parse/url",
+            {"url": url, "is_ocr": True},
+            timeout=min(30, timeout),
         )
         data = self._parse_task_response(raw)
         task_id = data.get("task_id")
