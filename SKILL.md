@@ -5,14 +5,16 @@ description: >-
   and URL-to-Markdown fetching. Use whenever the user asks to search the web
   (联网搜索 / 豆包 / 火山引擎 / DeepSeek 搜索 / 查最新信息), search images,
   search specialized data sources (academic papers, code, finance quotes,
-  security CVEs, legal, travel, news…), or fetch/read the content of a
-  webpage or article URL. One command (eztool) covers search AND fetching —
+  security CVEs, legal, travel, news…), fetch/read the content of a
+  webpage or article URL, or convert a local file (PDF/DOCX/XLSX/image/
+  CSV…) to Markdown. One command (eztool) covers search AND fetching AND
+  file conversion —
   use it even if the user doesn't name a specific backend.
 ---
 
 # ezwork-tool (eztool)
 
-一个命令完成「搜索 → 读全文」：`eztool search`（3 个搜索后端）+ `eztool fetch`（URL 转 Markdown）。零依赖、纯标准库，repo 即 skill。
+一个命令完成「搜索 → 读全文」：`eztool search`（3 个搜索后端）+ `eztool fetch`（URL 转 Markdown）+ `eztool convert`（本地文件转 Markdown）。零依赖、纯标准库，repo 即 skill。
 
 ## 什么时候用
 
@@ -23,6 +25,7 @@ description: >-
 | 学术论文 / 代码 / 金融行情 / CVE / 法律 / 旅行等专业数据 | `eztool search ... --tag <标签>`（先 `eztool tags` 看清单） |
 | AI 综合回答 + 来源列表 | `eztool search ... --backend deepseek` |
 | 读取网页 / 文章全文 | `eztool fetch <url>` |
+| 本地文件（PDF/DOCX/XLSX/图片/CSV 等）转 Markdown | `eztool convert <file>`（22 种格式，≤10MB） |
 
 ## 安装
 
@@ -82,6 +85,9 @@ eztool --version
 | `fetch.timeout` | 30 | 抓取默认超时（秒） |
 | `fetch.firecrawl.api_key` | 空 | 可选，提高 firecrawl 限速 |
 | `fetch.jina.api_key` | 空 | 可选，提高 jina 限速（无 key 约 20 RPM） |
+| `convert.providers` | `markdown` | 文件转换回退链（逗号分隔） |
+| `convert.timeout` | 60 | 文件转换默认超时（秒） |
+| `convert.markdown.timeout` | 60 | markdown.new 文件转换超时（秒） |
 
 ## 搜索：三个后端能搜什么
 
@@ -116,6 +122,11 @@ eztool search "q" --need-url --need-content        # [doubao] 只要带链接/�
 eztool fetch https://example.com/article
 eztool fetch --list-providers
 
+# 本地文件转 Markdown（22 种格式：PDF/DOCX/XLSX/图片/CSV/JSON…，≤10MB）
+eztool convert report.pdf                  # stdout 输出 Markdown
+eztool convert 报告.docx --out report.md   # 写入文件
+eztool convert --list-providers
+
 # 数据源标签清单（anysearch 40+ 标签）
 eztool tags
 ```
@@ -125,7 +136,7 @@ eztool tags
 ## Workflow for the Agent
 
 1. **搜索**：直接 `eztool search "<query>"`。默认 auto 路由即可；用户点名豆包/DeepSeek、需要图片或专业数据源时再显式加参数。
-2. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。
+2. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。本地文件（PDF/DOCX/XLSX/图片/CSV/JSON 等 22 种格式）用 `eztool convert <file>` 转 Markdown，`--out` 可写文件；不支持的文件类型/超 10MB 会在本地快速报错（exit 1）。
 3. **专业搜索**：先 `eztool tags` 看标签清单，再 `--tag` 定向；部分标签还需 `--params '{"key":"value"}'` 补充参数（如 `code.doc` 需要 `library`）。
 4. **凭证缺失**：报 `未配置 XX 凭证` 时，引导用户 `eztool config set <key>`，**绝不硬编码密钥**；用 `eztool config test` 验证。
 5. **失败处理**：exit 1 = 业务失败（无结果 / API 错误），exit 2 = 用法或凭证问题；错误在 stderr，格式 `error: <原因>` + `code: <语义码>`。

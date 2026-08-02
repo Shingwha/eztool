@@ -65,6 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     fp.add_argument("--list-providers", action="store_true", help="列出可用 provider")
     fp.set_defaults(func=cmd_fetch)
 
+    # ── convert ──────────────────────────────────────────────
+    vp = sub.add_parser("convert", help="本地文件转 Markdown（markdown.new 上传，22 种格式，≤10MB）")
+    vp.add_argument("file", nargs="?", help="本地文件路径（PDF/DOCX/XLSX/图片/CSV/JSON 等）")
+    vp.add_argument("--out", metavar="PATH", help="写入该文件而非输出到 stdout")
+    vp.add_argument("--timeout", type=int, default=None, help="超时秒数（覆盖配置，默认 60）")
+    vp.add_argument("--providers", help="覆盖回退链，逗号分隔")
+    vp.add_argument("--list-providers", action="store_true", help="列出支持文件转换的 provider")
+    vp.set_defaults(func=cmd_convert)
+
     # ── tags ────────────────────────────────────────────────
     tp = sub.add_parser("tags", help="列出 AnySearch 数据源标签")
     tp.set_defaults(func=cmd_tags)
@@ -127,6 +136,26 @@ def cmd_fetch(args: argparse.Namespace) -> None:
     print(result.content)
 
 
+# ── convert ────────────────────────────────────────────────
+
+def cmd_convert(args: argparse.Namespace) -> None:
+    from . import fetch as fmod
+
+    if args.list_providers:
+        print("convert providers: " + ", ".join(fmod.list_convert_providers()))
+        return
+    if not args.file:
+        raise UsageError("缺少 file 参数（或使用 --list-providers）")
+    cfg = cfgmod.load_config()
+    result = fmod.convert(cfg, args.file, {"timeout": args.timeout, "providers": args.providers})
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(result.content)
+        print(f"已写入 {args.out}（{len(result.content)} chars）")
+    else:
+        print(result.content)
+
+
 # ── tags ───────────────────────────────────────────────────
 
 def cmd_tags(args: argparse.Namespace) -> None:
@@ -138,16 +167,14 @@ def cmd_tags(args: argparse.Namespace) -> None:
 # ── config ─────────────────────────────────────────────────
 
 def _flat_keys() -> list[str]:
+    """扁平化全部可设键；provider 子段（值为 dict）自动展开，无需硬编码名字。"""
     keys: list[str] = []
     for sec, sub in cfgmod.DEFAULTS.items():
-        if sec == "fetch":
-            keys.append("fetch.providers")
-            keys.append("fetch.timeout")
-            for p in ("firecrawl", "markdown", "jina"):
-                for k in cfgmod.DEFAULTS["fetch"][p]:
-                    keys.append(f"fetch.{p}.{k}")
-        else:
-            for k in sub:
+        for k, v in sub.items():
+            if isinstance(v, dict):
+                for pk in v:
+                    keys.append(f"{sec}.{k}.{pk}")
+            else:
                 keys.append(f"{sec}.{k}")
     return keys
 

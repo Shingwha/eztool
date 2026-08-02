@@ -1,22 +1,27 @@
 """Provider protocol, error taxonomy, and the registry.
 
-This module is the extension point of ezwork-fetch. To add a new free
-fetch service:
+This module is the extension point of ezwork-tool's fetch/convert
+subsystems. To add a new free service (URL→Markdown and/or file→Markdown):
 
     1. Create ``providers/my_service.py``.
-    2. Subclass ``Provider``, set ``name``, implement ``fetch()``.
+    2. Subclass ``Provider``, set ``name``, implement ``fetch()``
+       (URL→Markdown) and/or ``convert_file()`` (local file→Markdown).
     3. Decorate the class with ``@register``.
     4. Import it in ``providers/__init__.py``.
 
-No other code needs to change. The CLI, config and fallback chain all
-consume providers through the registry only.
+No other code needs to change. The CLI, config, fallback chains and
+``--list-providers`` all consume the registry only. Providers that
+implement only one capability are skipped by the other chain
+(``convert_file`` reports CATEGORY_INVALID in the base class).
 """
 from __future__ import annotations
 
+import json
 import socket
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -101,6 +106,17 @@ class Provider:
     def timeout(self, default: int) -> int:
         return int((self.opts.timeouts or {}).get(self.name, default))
 
+    def convert_file(self, path: str, timeout: int = 60) -> FetchResult:
+        """Convert a local file to Markdown (multipart upload).
+
+        Providers that support local file conversion override this.
+        The base implementation reports "not supported" (INVALID) so the
+        convert chain skips this provider and moves on.
+        """
+        raise FetchError(
+            f"{self.name} does not support file conversion", CATEGORY_INVALID
+        )
+
     def parse_body(self, status: int, headers, body: bytes) -> str:
         """Turn the raw response body into markdown text.
 
@@ -165,7 +181,16 @@ class Provider:
     def _map_error(self, e: Exception, timeout: int) -> FetchError:
         """Map stdlib HTTP/network exceptions onto the FetchError taxonomy."""
         if isinstance(e, urllib.error.HTTPError):
-            return FetchError(f"HTTP {e.code}", CATEGORY_HTTP, e.code)
+            # 尽力从错误体解析 JSON（如 markdown.new 的 {"error": "..."}），
+            # 让回退链日志带上服务端原因。
+            detail = ""
+            try:
+                payload = json.loads(e.read().decode("utf-8", "replace"))
+                if isinstance(payload, dict) and payload.get("error"):
+                    detail = f": {payload['error']}"
+            except Exception:
+                pass
+            return FetchError(f"HTTP {e.code}{detail}", CATEGORY_HTTP, e.code)
         if isinstance(e, urllib.error.URLError):
             reason = getattr(e, "reason", e)
             if isinstance(reason, (TimeoutError, socket.timeout)):
@@ -208,6 +233,27 @@ def ensure_ascii(url: str) -> str:
     return "".join(out)
 
 
+def build_multipart(
+    field: str,
+    filename: str,
+    data: bytes,
+    content_type: str = "application/octet-stream",
+) -> tuple[bytes, str]:
+    """Build a single-file ``multipart/form-data`` body.
+
+    Returns ``(body, content-type header value)``. Shared by every
+    file-conversion provider (each POSTs the local file the same way).
+    """
+    boundary = "----ezwork" + uuid.uuid4().hex
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8")
+    body = head + data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
 # ---------------------------------------------------------------------------
 # Registry — the single extension point for new services.
 # ---------------------------------------------------------------------------
@@ -237,3 +283,10 @@ def create_provider(name: str, opts: ProviderOpts | None = None) -> Provider:
 
 def provider_names() -> list[str]:
     return sorted(PROVIDERS)
+
+
+def file_convert_providers() -> list[str]:
+    """Providers that override ``convert_file`` (usable by the convert chain)."""
+    return sorted(
+        n for n, cls in PROVIDERS.items() if cls.convert_file is not Provider.convert_file
+    )

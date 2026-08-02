@@ -1,6 +1,6 @@
 # ezwork-tool
 
-统一 CLI：**搜索**（Doubao / AnySearch / DeepSeek 三个后端）+ **URL 抓取转 Markdown**。
+统一 CLI：**搜索**（Doubao / AnySearch / DeepSeek 三个后端）+ **URL 抓取转 Markdown** + **本地文件转 Markdown**。
 一个工具、一个 skill（`SKILL.md` 即 skill，repo 即 skill）。零依赖、纯 Python 标准库。
 
 替代：`doubao-websearch` / `anysearch` / `deepseek-ws` / `ezwork-fetch` 四个独立 CLI。
@@ -11,6 +11,8 @@ eztool search "AAPL" --tag finance.quote         # anysearch 数据源
 eztool search "猫" --image                       # doubao 图片搜索
 eztool search "q" --backend deepseek             # DeepSeek AI 合成回答
 eztool fetch https://example.com/article         # URL → Markdown
+eztool convert report.pdf                        # 本地文件 → Markdown（22 种格式）
+eztool convert 报告.docx --out report.md          # 写入文件而非 stdout
 eztool tags                                      # 数据源标签目录
 ```
 

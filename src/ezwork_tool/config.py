@@ -26,6 +26,10 @@ DEFAULTS: dict[str, Any] = {
         "markdown": {"timeout": 30},
         "jina": {"api_key": None, "timeout": 10},
     },
+    "convert": {
+        "providers": ["markdown"], "timeout": 60,
+        "markdown": {"timeout": 60},
+    },
 }
 
 SECRET_KEYS = frozenset({
@@ -61,6 +65,9 @@ KEY_HINTS = {
     "fetch.markdown.timeout": "markdown.new 超时秒数",
     "fetch.jina.api_key": "Jina API Key（可选）",
     "fetch.jina.timeout": "jina 超时秒数",
+    "convert.providers": "文件转 Markdown 回退链，逗号分隔：markdown",
+    "convert.timeout": "文件转换默认超时秒数",
+    "convert.markdown.timeout": "markdown.new 文件转换超时秒数",
 }
 
 
@@ -125,7 +132,7 @@ def set_key(cfg: dict, path: str, value: Any) -> None:
 
 def parse_value(path: str, raw: str) -> Any:
     """把命令行字符串转成目标类型（bool/int/list/str）。"""
-    if path == "fetch.providers":
+    if path.endswith(".providers"):
         return [p.strip() for p in raw.split(",") if p.strip()]
     low = raw.strip().lower()
     if low in ("true", "false"):
