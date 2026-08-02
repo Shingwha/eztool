@@ -33,8 +33,9 @@ __all__ = [
     "list_providers", "list_convert_providers", "search_backend_names",
 ]
 
-# auto 模式的 failover 顺序（行业惯例：按凭证成本/能力从高到低）
-AUTO_SEARCH_ORDER = ["doubao", "deepseek", "anysearch"]
+# auto 模式的 failover 顺序（免费/匿名可用优先，可被配置 search.providers 覆盖；
+# 与 config.DEFAULTS 同源，测试 monkeypatch 此名称即可）
+AUTO_SEARCH_ORDER = cfgmod.DEFAULTS["search"]["providers"]
 
 # provider 段缺省超时（与 config.DEFAULTS 一致）；未配置段的 provider 回退段超时
 DEFAULT_TIMEOUTS = {"firecrawl": 60, "markdown": 30, "jina": 10, "mineru": 300}
@@ -113,7 +114,11 @@ def search(
     """搜索。backend=auto → AUTO_SEARCH_ORDER 逐个 failover；显式 → 单后端。"""
     opts = opts or {}
     if backend == "auto":
-        names = list(AUTO_SEARCH_ORDER)
+        # 顺序可配置：search.providers（配置）> opts.providers（CLI）> 默认
+        search_cfg = cfg.get("search") or {}
+        if not isinstance(search_cfg, dict):
+            search_cfg = {}
+        names = _chain_providers(search_cfg, opts, AUTO_SEARCH_ORDER)
     else:
         names = [backend]
         if backend not in search_services():

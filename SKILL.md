@@ -58,7 +58,7 @@ eztool --version
 | `doubao` | `providers.doubao.api_key`，或 `providers.doubao.ak` + `providers.doubao.sk` | 无法使用 doubao 后端（auto 会尝试其他后端） |
 | `anysearch` | 无 | 可用（匿名模式，按 IP 限速）；配 `providers.anysearch.api_key` 可提高配额 |
 | `deepseek` | `providers.deepseek.api_key` | 无法使用 deepseek 后端 |
-| `fetch` / `convert` | 无 | 可用（firecrawl→markdown.new→jina 抓取、markdown.new→MinerU 转换，全免费无 Token）；配 `mineru.api_key` 后 MinerU 自动升级 v4 Precision API |
+| `fetch` / `convert` | 无 | 可用（markdown.new→jina→firecrawl 抓取、markdown.new→MinerU 转换，全免费无 Token）；配 `mineru.api_key` 后 MinerU 自动升级 v4 Precision API |
 
 ### 全部配置项
 
@@ -81,7 +81,9 @@ eztool --version
 | `providers.deepseek.model` | `deepseek-v4-flash` | 模型 |
 | `providers.deepseek.thinking` | `enabled` | 思考模式 `enabled`/`disabled`（enabled 更准但更慢更贵） |
 | `providers.deepseek.max_tokens` | 32768 | 最大输出 token 数 |
-| `fetch.providers` | `firecrawl,markdown,jina` | 抓取回退链（逗号分隔，按序尝试，首个成功即用） |
+| `search.providers` | `anysearch,doubao,deepseek` | 搜索回退链（逗号分隔，免费优先，按序尝试，首个成功即用） |
+| `search.timeout` | 30 | 搜索默认超时（秒） |
+| `fetch.providers` | `markdown,jina,firecrawl` | 抓取回退链（逗号分隔，免费优先，按序尝试，首个成功即用） |
 | `fetch.timeout` | 30 | 抓取默认超时（秒） |
 | `providers.firecrawl.api_key` | 空 | 可选，提高 firecrawl 限速 |
 | `providers.jina.api_key` | 空 | 可选，提高 jina 限速（无 key 约 20 RPM） |
@@ -105,7 +107,7 @@ eztool --version
 | 查询改写 / 权威过滤 | ✅ `--query-rewrite` / `--auth-info-level` | ❌ | ❌ |
 | 凭证要求 | 必须 | 可选（匿名可用） | 必须 |
 
-后端选择：`--backend auto`（默认）按 **doubao → deepseek → anysearch** 顺序逐个尝试，失败的自动换下一个（failover）；`--backend doubao|anysearch|deepseek` 强制指定单个。任何后端都未配置时 auto 落到 anysearch（匿名），所以**开箱即可搜索**。
+后端选择：`--backend auto`（默认）按 **anysearch → doubao → deepseek** 顺序逐个尝试（免费优先，失败的自动换下一个，failover）；顺序可用 `search.providers` 配置或 `--providers` 临时覆盖；`--backend doubao|anysearch|deepseek` 强制指定单个。anysearch 匿名可用，所以**开箱即可搜索**。
 
 ## 用法
 

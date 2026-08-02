@@ -30,8 +30,9 @@ DEFAULTS: dict[str, Any] = {
         "jina": {"api_key": None, "timeout": 10},
         "mineru": {"api_key": None, "timeout": 300},
     },
-    "search": {"timeout": 30},
-    "fetch": {"providers": ["firecrawl", "markdown", "jina"], "timeout": 30},
+    # 回退链默认顺序：免费/匿名可用的服务在前，需 API Key 的在后
+    "search": {"providers": ["anysearch", "doubao", "deepseek"], "timeout": 30},
+    "fetch": {"providers": ["markdown", "jina", "firecrawl"], "timeout": 30},
     "convert": {"providers": ["markdown", "mineru"], "timeout": 60},
 }
 
@@ -69,8 +70,9 @@ KEY_HINTS = {
     "providers.jina.timeout": "jina 超时秒数",
     "providers.mineru.api_key": "MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML）；不配走 v1 轻量 API（≤10MB/20页）",
     "providers.mineru.timeout": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）",
+    "search.providers": "搜索回退链，逗号分隔（免费优先）：anysearch,doubao,deepseek",
     "search.timeout": "搜索默认超时秒数",
-    "fetch.providers": "抓取回退链，逗号分隔：firecrawl,markdown,jina",
+    "fetch.providers": "抓取回退链，逗号分隔（免费优先）：markdown,jina,firecrawl",
     "fetch.timeout": "抓取默认超时秒数",
     "convert.providers": "文件转 Markdown 回退链，逗号分隔：markdown,mineru",
     "convert.timeout": "文件转换默认超时秒数",

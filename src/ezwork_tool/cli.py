@@ -39,7 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("query", help="搜索词")
     backends = ("auto",) + tuple(search_services())
     sp.add_argument("--backend", choices=backends, default="auto",
-                    help="后端；auto 按 doubao→deepseek→anysearch 逐个回退")
+                    help="后端；auto 按 search.providers 链回退（默认 anysearch→doubao→deepseek，免费优先）")
+    sp.add_argument("--providers", help="覆盖搜索回退链，逗号分隔（仅 auto 模式生效）")
     sp.add_argument("--count", type=int, default=None,
                     help="结果条数（doubao≤50 / anysearch≤20 / deepseek 忽略）")
     sp.add_argument("--timeout", type=int, default=None, help="请求超时秒数（覆盖后端默认）")
@@ -58,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_search)
 
     # ── fetch ───────────────────────────────────────────────
-    fp = sub.add_parser("fetch", help="抓取 URL 转 Markdown（firecrawl→markdown.new→jina 回退链）")
+    fp = sub.add_parser("fetch", help="抓取 URL 转 Markdown（markdown.new→jina→firecrawl 回退链，免费优先）")
     fp.add_argument("url", nargs="?", help="要抓取的 URL")
     fp.add_argument("--timeout", type=int, default=None, help="超时秒数（覆盖配置）")
     fp.add_argument("--providers", help="覆盖回退链，逗号分隔")
@@ -107,6 +108,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     opts = {name: getattr(args, name, None) for name in all_search_params()}
     opts.update({
         "count": args.count, "timeout": args.timeout, "full": args.full,
+        "providers": getattr(args, "providers", None),
     })
     resp = api.search(cfg, args.query, args.backend, opts)
     print(format_search(resp, full=args.full))

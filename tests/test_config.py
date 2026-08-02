@@ -46,7 +46,8 @@ class TestLoadConfig(unittest.TestCase):
     def test_defaults_when_no_file(self):
         cfg = self._load_in()
         self.assertEqual(cfg["providers"]["anysearch"]["max_results"], 10)
-        self.assertEqual(cfg["fetch"]["providers"], ["firecrawl", "markdown", "jina"])
+        self.assertEqual(cfg["search"]["providers"], ["anysearch", "doubao", "deepseek"])
+        self.assertEqual(cfg["fetch"]["providers"], ["markdown", "jina", "firecrawl"])
         self.assertEqual(cfg["providers"]["deepseek"]["thinking"], "enabled")
         self.assertEqual(cfg["providers"]["mineru"]["timeout"], 300)
 
