@@ -3,7 +3,7 @@
 import unittest
 
 from ezwork_tool.formatter import format_search
-from ezwork_tool.search.base import SearchResponse, SearchResult
+from ezwork_tool.base import SearchResponse, SearchResult
 
 
 def _resp(results=None, answer=None):

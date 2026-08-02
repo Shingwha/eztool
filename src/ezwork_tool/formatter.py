@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .search.base import SearchResponse
+from .base import SearchResponse
 
 SNIPPET_LIMIT = 300
 

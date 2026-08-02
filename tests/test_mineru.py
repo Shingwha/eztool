@@ -10,8 +10,8 @@ import urllib.error
 import zipfile
 from unittest import mock
 
-from ezwork_tool.fetch import provider as pmod
-from ezwork_tool.fetch.providers.mineru import (
+from ezwork_tool import base as pmod
+from ezwork_tool.providers.mineru import (
     BASE_URL,
     V1_MAX_FILE_SIZE,
     MinerUProvider,
@@ -90,7 +90,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
             path = f.name
         try:
             with mock.patch(
-                "ezwork_tool.fetch.providers.mineru.os.path.getsize",
+                "ezwork_tool.providers.mineru.os.path.getsize",
                 return_value=V1_MAX_FILE_SIZE + 1,
             ):
                 with self.assertRaises(pmod.FetchError) as ctx:
@@ -247,7 +247,7 @@ class TestFetchFlow(unittest.TestCase):
 
 class TestRegistered(unittest.TestCase):
     def test_mineru_registered_and_has_convert_capability(self):
-        from ezwork_tool.fetch import list_convert_providers, list_providers
+        from ezwork_tool.api import list_convert_providers, list_providers
         self.assertIn("mineru", list_providers())
         self.assertIn("mineru", list_convert_providers())
 
@@ -430,7 +430,7 @@ class TestV4WithToken(unittest.TestCase):
         doc.close()
         try:
             with mock.patch(
-                "ezwork_tool.fetch.providers.mineru.os.path.getsize",
+                "ezwork_tool.providers.mineru.os.path.getsize",
                 return_value=V1_MAX_FILE_SIZE + 1,  # 11MB：v1 超限但 v4 允许
             ), mock.patch("urllib.request.urlopen", side_effect=[
                 _resp({"code": 0, "data": {"batch_id": "b5",

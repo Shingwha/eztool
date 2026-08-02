@@ -8,9 +8,10 @@ import unittest
 import urllib.error
 from unittest import mock
 
-from ezwork_tool.fetch import chain as chainmod
-from ezwork_tool.fetch import provider as pmod
-from ezwork_tool.fetch.providers.markdown_new import (
+from ezwork_tool import chain as chainmod
+from ezwork_tool import base as pmod
+from ezwork_tool.api import convert
+from ezwork_tool.providers.markdown_new import (
     SUPPORTED_EXTENSIONS,
     MarkdownNewProvider,
 )
@@ -69,7 +70,7 @@ class TestConvertFileLocalChecks(unittest.TestCase):
             path = f.name
         try:
             with mock.patch(
-                "ezwork_tool.fetch.providers.markdown_new.os.path.getsize",
+                "ezwork_tool.providers.markdown_new.os.path.getsize",
                 return_value=11 * 1024 * 1024,
             ):
                 with self.assertRaises(pmod.FetchError) as ctx:
@@ -83,7 +84,7 @@ class TestConvertFileHttp(unittest.TestCase):
     def setUp(self):
         self.provider = MarkdownNewProvider()
 
-    @mock.patch("ezwork_tool.fetch.providers.markdown_new.urllib.request.urlopen")
+    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
     def test_success_parses_content_and_tokens(self, urlopen):
         urlopen.return_value = _ok_response({
             "success": True,
@@ -107,7 +108,7 @@ class TestConvertFileHttp(unittest.TestCase):
         finally:
             os.remove(path)
 
-    @mock.patch("ezwork_tool.fetch.providers.markdown_new.urllib.request.urlopen")
+    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
     def test_service_error_json_maps_to_invalid(self, urlopen):
         urlopen.side_effect = _err_response(400, {
             "success": False,
@@ -124,7 +125,7 @@ class TestConvertFileHttp(unittest.TestCase):
         finally:
             os.remove(path)
 
-    @mock.patch("ezwork_tool.fetch.providers.markdown_new.urllib.request.urlopen")
+    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
     def test_success_false_without_code_is_http(self, urlopen):
         urlopen.side_effect = _err_response(500, {
             "success": False, "error": "internal boom", "code": "INTERNAL",
@@ -139,7 +140,7 @@ class TestConvertFileHttp(unittest.TestCase):
         finally:
             os.remove(path)
 
-    @mock.patch("ezwork_tool.fetch.providers.markdown_new.urllib.request.urlopen")
+    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
     def test_garbage_body_is_empty(self, urlopen):
         resp = mock.MagicMock()
         resp.status = 200
@@ -169,7 +170,7 @@ class TestConvertFileHttp(unittest.TestCase):
 class TestConvertChain(unittest.TestCase):
     """链会跳过无 convert_file 能力的 provider（jina），继续到 markdown。"""
 
-    @mock.patch("ezwork_tool.fetch.providers.markdown_new.urllib.request.urlopen")
+    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
     def test_skips_url_only_provider(self, urlopen):
         urlopen.return_value = _ok_response({
             "success": True,
@@ -184,18 +185,18 @@ class TestConvertChain(unittest.TestCase):
             )
             self.assertIsNotNone(result)
             self.assertEqual(result.provider, "markdown")
-            self.assertTrue(any("jina" in l and "does not support" in l for l in logs))
+            self.assertTrue(any("jina" in l and "skipped" in l for l in logs))
         finally:
             os.remove(path)
 
 
 class TestConvertEntry(unittest.TestCase):
     def test_all_failed_raises_backend_error(self):
-        from ezwork_tool.errors import BackendError
-        from ezwork_tool.fetch import convert
+        from ezwork_tool.errors import ServiceError
 
-        cfg = {"convert": {"providers": ["markdown"], "timeout": 5, "markdown": {}}}
-        with self.assertRaises(BackendError) as ctx:
+        cfg = {"convert": {"providers": ["markdown"], "timeout": 5},
+               "providers": {"markdown": {}}}
+        with self.assertRaises(ServiceError) as ctx:
             convert(cfg, "C:/definitely/missing/file.pdf")
         self.assertEqual(ctx.exception.code, "convert_failed")
 

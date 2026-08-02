@@ -9,12 +9,14 @@ unreachable — the fallback chain will time out and move on.
 """
 from __future__ import annotations
 
-from ..provider import Provider, register
+from ..base import Provider
+from ..registry import register
 
 
 @register
 class JinaReaderProvider(Provider):
     name = "jina"
+    capabilities = frozenset({"fetch"})
     base_url = "https://r.jina.ai/"
 
     def build_headers(self) -> dict:

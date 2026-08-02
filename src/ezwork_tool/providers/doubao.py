@@ -26,8 +26,9 @@ import urllib.request
 from typing import Any
 from urllib.parse import quote
 
+from ..base import ParamSpec, Provider, SearchResponse, SearchResult
 from ..errors import BackendError, CredentialsError, NoResultsError
-from .base import SearchResponse, SearchResult
+from ..registry import register
 
 # --- Endpoint constants ------------------------------------------------------
 
@@ -172,7 +173,7 @@ def _parse_response(raw: str, status: int | None = None) -> dict:
 
 
 def _doubao_cfg(cfg: dict) -> dict:
-    return cfg.get("doubao") or {}
+    return cfg.get("providers", {}).get("doubao") or {}
 
 
 def _pick_auth(d: dict) -> str:
@@ -208,13 +209,13 @@ def _resolve_creds(d: dict) -> tuple[str, str, str]:
     return method, ak, sk
 
 
-def has_credentials(cfg: dict) -> bool:
+def _has_credentials(cfg: dict) -> bool:
     """doubao 段有 api_key（Bearer）或有 ak+sk（签名）即 True。"""
     d = _doubao_cfg(cfg)
     return bool(d.get("api_key")) or (bool(d.get("ak")) and bool(d.get("sk")))
 
 
-def test_credentials(cfg: dict) -> str:
+def _test_credentials(cfg: dict) -> str:
     """发一个最小搜索请求验证凭证，成功返回状态描述（如 "OK (0.4s)"）。"""
     t0 = time.monotonic()
     _request(cfg, "ping", {"count": 1, "timeout": 15})
@@ -380,7 +381,7 @@ def _to_metadata(payload: dict, results: list[SearchResult]) -> dict:
 # --- 对外接口 -----------------------------------------------------------------
 
 
-def search(cfg: dict, query: str, opts: dict) -> SearchResponse:
+def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     """执行 doubao 搜索（image=True 走图片搜索，否则网页搜索）。"""
     query = (query or "").strip()
     # full 只影响展示（formatter 截断），不映射到 API body —— 与原 CLI 一致
@@ -392,3 +393,39 @@ def search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     return SearchResponse(
         query=query, results=results, answer=None, metadata=_to_metadata(payload, results),
     )
+
+
+@register
+class DoubaoProvider(Provider):
+    """doubao 搜索后端（实现见上 *_search/_has_credentials/_test_credentials）。"""
+
+    name = "doubao"
+    capabilities = frozenset({"search"})
+    search_params = {
+        "image": ParamSpec(action="store_true", help="[doubao] 图片搜索"),
+        "sites": ParamSpec(help="[doubao] 限定域名，| 分隔"),
+        "block_hosts": ParamSpec(help="[doubao] 排除域名，| 分隔"),
+        "time_range": ParamSpec(
+            help="[doubao] OneDay/OneWeek/OneMonth/OneYear 或 YYYY-MM-DD..YYYY-MM-DD"
+        ),
+        "need_content": ParamSpec(action="store_true", help="[doubao] 只返回带正文的结果"),
+        "need_url": ParamSpec(action="store_true", help="[doubao] 只返回带落地链接的结果"),
+        "content_formats": ParamSpec(choices=("text", "markdown"), help="[doubao] 正文格式"),
+        "industry": ParamSpec(choices=("finance", "game", "gov"), help="[doubao] 行业搜索"),
+        "query_rewrite": ParamSpec(action="store_true", help="[doubao] 查询改写（更慢）"),
+        "auth_info_level": ParamSpec(type=int, choices=(0, 1), help="[doubao] 1=仅高权威来源"),
+        "width_min": ParamSpec(type=int, help="[doubao image] 最小宽度"),
+        "width_max": ParamSpec(type=int, help="[doubao image] 最大宽度"),
+        "height_min": ParamSpec(type=int, help="[doubao image] 最小高度"),
+        "height_max": ParamSpec(type=int, help="[doubao image] 最大高度"),
+        "shapes": ParamSpec(choices=("横长方形", "竖长方形", "方形"), help="[doubao image] 图片形状"),
+    }
+
+    def has_credentials(self, cfg: dict) -> bool:
+        return _has_credentials(cfg)
+
+    def test_credentials(self, cfg: dict) -> str:
+        return _test_credentials(cfg)
+
+    def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
+        return _search(cfg, query, opts)

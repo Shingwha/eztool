@@ -25,16 +25,16 @@ import time
 import urllib.request
 import zipfile
 
-from ..provider import (
+from ..base import FetchResult, Provider
+from ..errors import (
     CATEGORY_EMPTY,
     CATEGORY_HTTP,
     CATEGORY_INVALID,
     CATEGORY_TIMEOUT,
-    FetchError,
-    FetchResult,
-    Provider,
-    register,
+    ServiceError,
 )
+from ..http import http_get, http_post, map_http_error
+from ..registry import register
 
 BASE_URL = "https://mineru.net"
 V1_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -58,6 +58,7 @@ _INVALID_CODES = {-30001, -30002, -30003, -30004, -500, -10002}
 @register
 class MinerUProvider(Provider):
     name = "mineru"
+    capabilities = frozenset({"fetch", "convert_file"})
 
     @property
     def _v4(self) -> bool:
@@ -109,7 +110,7 @@ class MinerUProvider(Provider):
         task_id = data.get("task_id")
         file_url = data.get("file_url")
         if not task_id or not file_url:
-            raise FetchError(
+            raise ServiceError(
                 f"{self.name} response missing task_id/file_url", CATEGORY_EMPTY
             )
 
@@ -136,7 +137,7 @@ class MinerUProvider(Provider):
         data = self._parse_task_response(raw)
         task_id = data.get("task_id")
         if not task_id:
-            raise FetchError(f"{self.name} response missing task_id", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} response missing task_id", CATEGORY_EMPTY)
 
         done = self._poll_status(
             f"{BASE_URL}/api/v1/agent/parse/{task_id}", timeout
@@ -170,7 +171,7 @@ class MinerUProvider(Provider):
         batch_id = data.get("batch_id")
         file_urls = data.get("file_urls")
         if not batch_id or not isinstance(file_urls, list) or not file_urls:
-            raise FetchError(
+            raise ServiceError(
                 f"{self.name} response missing batch_id/file_urls", CATEGORY_EMPTY
             )
 
@@ -184,7 +185,7 @@ class MinerUProvider(Provider):
         results = done.get("extract_result") or []
         zip_url = results[0].get("full_zip_url") if results else None
         if not zip_url:
-            raise FetchError(
+            raise ServiceError(
                 f"{self.name} result missing full_zip_url", CATEGORY_EMPTY
             )
         content = self._download_zip_markdown(zip_url, timeout)
@@ -216,7 +217,7 @@ class MinerUProvider(Provider):
         data = self._parse_task_response(raw)
         task_id = data.get("task_id")
         if not task_id:
-            raise FetchError(f"{self.name} response missing task_id", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} response missing task_id", CATEGORY_EMPTY)
 
         done = self._poll_status(
             f"{BASE_URL}/api/v4/extract/task/{task_id}", timeout
@@ -234,11 +235,11 @@ class MinerUProvider(Provider):
     def _check_local_file(self, path: str) -> str:
         """Local pre-checks for the active tier; returns the extension."""
         if not os.path.isfile(path):
-            raise FetchError(f"file not found: {path}", CATEGORY_INVALID)
+            raise ServiceError(f"file not found: {path}", CATEGORY_INVALID)
         ext = os.path.splitext(path)[1].lower()
         supported = V4_SUPPORTED_EXTENSIONS if self._v4 else V1_SUPPORTED_EXTENSIONS
         if ext not in supported:
-            raise FetchError(
+            raise ServiceError(
                 f"unsupported file type '{ext}' (supported: "
                 f"{', '.join(sorted(supported))})",
                 CATEGORY_INVALID,
@@ -246,7 +247,7 @@ class MinerUProvider(Provider):
         max_size = V4_MAX_FILE_SIZE if self._v4 else V1_MAX_FILE_SIZE
         size = os.path.getsize(path)
         if size > max_size:
-            raise FetchError(
+            raise ServiceError(
                 f"file too large: {size} bytes (max {max_size})", CATEGORY_INVALID
             )
         return ext
@@ -260,28 +261,12 @@ class MinerUProvider(Provider):
 
     def _post_json(self, target: str, payload: dict, timeout: int):
         """POST JSON body; returns (status, headers, body bytes)."""
-        req = urllib.request.Request(
-            target, data=json.dumps(payload).encode("utf-8"), method="POST"
-        )
-        req.add_header("Content-Type", "application/json")
-        for k, v in self._auth_headers().items():
-            req.add_header(k, v)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.status, resp.headers, resp.read()
-        except Exception as e:
-            raise self._map_error(e, timeout) from e
+        headers = {"Content-Type": "application/json", **self._auth_headers()}
+        return http_post(target, headers, json.dumps(payload).encode("utf-8"), timeout)
 
     def _get_json(self, target: str, timeout: float) -> bytes:
         """Authorized GET (Bearer when v4); returns raw body bytes."""
-        req = urllib.request.Request(target)
-        for k, v in self._auth_headers().items():
-            req.add_header(k, v)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
-        except Exception as e:
-            raise self._map_error(e, timeout) from e
+        return http_get(target, self._auth_headers(), timeout)[2]
 
     def _put_file(self, url: str, path: str, timeout: int) -> None:
         """PUT the file bytes to the signed OSS URL.
@@ -299,9 +284,9 @@ class MinerUProvider(Provider):
             with urllib.request.urlopen(req, timeout=min(60, timeout)) as resp:
                 put_status = resp.status
         except Exception as e:
-            raise self._map_error(e, min(60, timeout)) from e
+            raise map_http_error(e, min(60, timeout)) from e
         if put_status not in (200, 201):
-            raise FetchError(
+            raise ServiceError(
                 f"upload failed: HTTP {put_status}", CATEGORY_HTTP, put_status
             )
 
@@ -310,18 +295,18 @@ class MinerUProvider(Provider):
         try:
             payload = json.loads(raw.decode("utf-8", "replace"))
         except ValueError:
-            raise FetchError(f"{self.name} returned invalid JSON", CATEGORY_EMPTY) from None
+            raise ServiceError(f"{self.name} returned invalid JSON", CATEGORY_EMPTY) from None
         if not isinstance(payload, dict):
-            raise FetchError(f"{self.name} returned invalid JSON", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} returned invalid JSON", CATEGORY_EMPTY)
         if payload.get("code") != 0:
             code = payload.get("code")
             category = CATEGORY_INVALID if code in _INVALID_CODES else CATEGORY_HTTP
-            raise FetchError(
+            raise ServiceError(
                 payload.get("msg") or f"request failed (code={code})", category
             )
         data = payload.get("data")
         if not isinstance(data, dict):
-            raise FetchError(f"{self.name} response missing data", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} response missing data", CATEGORY_EMPTY)
         return data
 
     def _poll_status(self, status_url: str, timeout: int) -> dict:
@@ -337,7 +322,7 @@ class MinerUProvider(Provider):
 
         while True:
             if _remaining() <= 0:
-                raise FetchError(
+                raise ServiceError(
                     f"timed out after {int(timeout)}s waiting for extract task",
                     CATEGORY_TIMEOUT,
                 )
@@ -358,38 +343,38 @@ class MinerUProvider(Provider):
                     results = data.get("extract_result")
                     if isinstance(results, list) and results:
                         err = results[0].get("err_msg")
-                raise FetchError(err or "extract task failed", CATEGORY_HTTP)
+                raise ServiceError(err or "extract task failed", CATEGORY_HTTP)
             if state not in _POLL_STATES:
-                raise FetchError(f"unknown task state '{state}'", CATEGORY_HTTP)
+                raise ServiceError(f"unknown task state '{state}'", CATEGORY_HTTP)
             time.sleep(min(POLL_INTERVAL, max(0.0, _remaining())))
 
     def _download_text(self, md_url: str, timeout: int) -> str:
         """Download a Markdown text URL (v1 CDN result)."""
         if not md_url:
-            raise FetchError(f"{self.name} task done but no markdown_url", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} task done but no markdown_url", CATEGORY_EMPTY)
         status, _, body = self._http_get(md_url, timeout=min(60, timeout))
         text = body.decode("utf-8", errors="replace").strip()
         if not text:
-            raise FetchError(f"{self.name} returned empty content", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} returned empty content", CATEGORY_EMPTY)
         return text
 
     def _download_zip_markdown(self, zip_url: str, timeout: int) -> str:
         """Download the v4 result zip and extract the full.md Markdown."""
         if not zip_url:
-            raise FetchError(f"{self.name} task done but no full_zip_url", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} task done but no full_zip_url", CATEGORY_EMPTY)
         status, _, body = self._http_get(zip_url, timeout=min(120, timeout))
         try:
             with zipfile.ZipFile(io.BytesIO(body)) as zf:
                 names = [n for n in zf.namelist() if n.endswith("full.md")]
                 if not names:
-                    raise FetchError(
+                    raise ServiceError(
                         f"{self.name} result zip has no full.md", CATEGORY_EMPTY
                     )
                 # 多文件 zip（罕见）取内容最大的 full.md。
                 name = max(names, key=lambda n: zf.getinfo(n).file_size)
                 text = zf.read(name).decode("utf-8", errors="replace").strip()
         except zipfile.BadZipFile:
-            raise FetchError(f"{self.name} result zip is corrupt", CATEGORY_EMPTY) from None
+            raise ServiceError(f"{self.name} result zip is corrupt", CATEGORY_EMPTY) from None
         if not text:
-            raise FetchError(f"{self.name} returned empty markdown", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} returned empty markdown", CATEGORY_EMPTY)
         return text

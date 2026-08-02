@@ -6,7 +6,7 @@
 替代：`doubao-websearch` / `anysearch` / `deepseek-ws` / `ezwork-fetch` 四个独立 CLI。
 
 ```bash
-eztool search "Rust async 2026"                  # 自动路由后端
+eztool search "Rust async 2026"                  # auto 逐个回退后端
 eztool search "AAPL" --tag finance.quote         # anysearch 数据源
 eztool search "猫" --image                       # doubao 图片搜索
 eztool search "q" --backend deepseek             # DeepSeek AI 合成回答
@@ -27,9 +27,9 @@ eztool --help
 ## 配置
 
 ```bash
-eztool config set doubao.api_key     # 豆包/火山 WebSearch 凭证（或 ak+sk）
-eztool config set deepseek.api_key   # DeepSeek key（可选）
-eztool config set anysearch.api_key  # AnySearch key（可选，匿名可用）
+eztool config set providers.doubao.api_key     # 豆包/火山 WebSearch 凭证（或 ak+sk）
+eztool config set providers.deepseek.api_key   # DeepSeek key（可选）
+eztool config set providers.anysearch.api_key  # AnySearch key（可选，匿名可用）
 eztool config test                   # 验证凭证
 ```
 
@@ -43,7 +43,7 @@ eztool config test                   # 验证凭证
 | `anysearch` | 40+ 数据源标签（学术/代码/金融/安全/法律/旅行…） | 可选，匿名可用 |
 | `deepseek` | 服务端搜索 + AI 合成回答 + 来源列表 | 需要（DeepSeek API Key） |
 
-`--backend auto`（默认）：doubao → deepseek → anysearch 兜底。输出格式三后端统一。
+`--backend auto`（默认）：按 doubao → deepseek → anysearch 顺序尝试，失败自动换下一个（failover）。输出格式三后端统一。
 
 ## 开发
 

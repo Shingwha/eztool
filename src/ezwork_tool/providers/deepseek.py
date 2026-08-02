@@ -16,8 +16,9 @@ import urllib.error
 import urllib.request
 from typing import Any, Literal
 
+from ..base import ParamSpec, Provider, SearchResponse, SearchResult
 from ..errors import BackendError, CredentialsError, NoResultsError
-from .base import SearchResponse, SearchResult
+from ..registry import register
 
 # ── 常量 ───────────────────────────────────────────────────────────────────
 
@@ -44,14 +45,14 @@ Your response must be the final answer, not another search request."""
 # ── 凭证 ───────────────────────────────────────────────────────────────────
 
 
-def has_credentials(cfg: dict) -> bool:
+def _has_credentials(cfg: dict) -> bool:
     """deepseek 段配置了 api_key 即 True。"""
-    return bool((cfg.get("deepseek") or {}).get("api_key"))
+    return bool((cfg.get("providers", {}).get("deepseek") or {}).get("api_key"))
 
 
 def _require_api_key(cfg: dict) -> str:
     """取 api_key，缺失抛 CredentialsError。"""
-    api_key = (cfg.get("deepseek") or {}).get("api_key")
+    api_key = (cfg.get("providers", {}).get("deepseek") or {}).get("api_key")
     if not api_key:
         raise CredentialsError(
             "未配置 DeepSeek API Key，请运行 `eztool config set deepseek.api_key <key>`",
@@ -60,13 +61,13 @@ def _require_api_key(cfg: dict) -> str:
     return api_key
 
 
-def test_credentials(cfg: dict) -> str:
+def _test_credentials(cfg: dict) -> str:
     """发最小请求验证密钥（移植自原 cli.py 的 cmd_config_test）。
 
     小 token（64）+ 关闭 thinking 加速。成功返回描述字符串，失败抛异常。
     """
     api_key = _require_api_key(cfg)
-    ds = cfg.get("deepseek") or {}
+    ds = cfg.get("providers", {}).get("deepseek") or {}
     base_url = os.environ.get("DEEPSEEK_WS_BASE_URL") or DEFAULT_BASE_URL
     answer, results = _request_search(
         query="ping",
@@ -86,7 +87,7 @@ def test_credentials(cfg: dict) -> str:
 # ── 核心搜索 ─────────────────────────────────────────────────────────────────
 
 
-def search(cfg: dict, query: str, opts: dict) -> SearchResponse:
+def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     """执行 DeepSeek 服务端搜索。
 
     cfg["deepseek"]：api_key（必须）/ model（默认 deepseek-v4-flash）/
@@ -95,7 +96,7 @@ def search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     基址可用环境变量 DEEPSEEK_WS_BASE_URL 覆盖。
     """
     api_key = _require_api_key(cfg)
-    ds = cfg.get("deepseek") or {}
+    ds = cfg.get("providers", {}).get("deepseek") or {}
     model = ds.get("model") or DEFAULT_MODEL
     thinking: Literal["enabled", "disabled"] = (
         "enabled" if (ds.get("thinking") or "enabled") != "disabled" else "disabled"
@@ -243,3 +244,21 @@ def _request_search(
                 text_parts.append(text.strip())
 
     return "\n\n".join(text_parts), results
+
+
+@register
+class DeepSeekProvider(Provider):
+    """deepseek 搜索后端（服务端搜索 + AI 合成回答）。"""
+
+    name = "deepseek"
+    capabilities = frozenset({"search"})
+    # deepseek 无特有 CLI 参数（count/full 由服务端决定，忽略）
+
+    def has_credentials(self, cfg: dict) -> bool:
+        return _has_credentials(cfg)
+
+    def test_credentials(self, cfg: dict) -> str:
+        return _test_credentials(cfg)
+
+    def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
+        return _search(cfg, query, opts)

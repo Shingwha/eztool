@@ -17,16 +17,15 @@ import json
 import os
 import urllib.request
 
-from ..provider import (
+from ..base import FetchResult, Provider
+from ..errors import (
     CATEGORY_EMPTY,
     CATEGORY_HTTP,
     CATEGORY_INVALID,
-    FetchError,
-    FetchResult,
-    Provider,
-    build_multipart,
-    register,
+    ServiceError,
 )
+from ..http import build_multipart, map_http_error
+from ..registry import register
 
 CONVERT_URL = "https://markdown.new/convert"
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB service limit
@@ -45,6 +44,7 @@ _INVALID_CODES = {"UNSUPPORTED_FORMAT", "FILE_TOO_LARGE", "INVALID_FILE"}
 @register
 class MarkdownNewProvider(Provider):
     name = "markdown"
+    capabilities = frozenset({"fetch", "convert_file"})
     base_url = "https://markdown.new/"
 
     # Note: markdown.new treats the whole request path+query as the target
@@ -59,17 +59,17 @@ class MarkdownNewProvider(Provider):
         CATEGORY_INVALID so bad input never burns a request or a chain slot.
         """
         if not os.path.isfile(path):
-            raise FetchError(f"file not found: {path}", CATEGORY_INVALID)
+            raise ServiceError(f"file not found: {path}", CATEGORY_INVALID)
         ext = os.path.splitext(path)[1].lower()
         if ext not in SUPPORTED_EXTENSIONS:
             supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-            raise FetchError(
+            raise ServiceError(
                 f"unsupported file type '{ext}' (supported: {supported})",
                 CATEGORY_INVALID,
             )
         size = os.path.getsize(path)
         if size > MAX_FILE_SIZE:
-            raise FetchError(
+            raise ServiceError(
                 f"file too large: {size} bytes (max {MAX_FILE_SIZE})", CATEGORY_INVALID
             )
 
@@ -87,7 +87,7 @@ class MarkdownNewProvider(Provider):
         except Exception as e:  # HTTP/network errors → standard taxonomy
             if isinstance(e, urllib.error.HTTPError):
                 # 服务端错误 JSON 的语义码（UNSUPPORTED_FORMAT 等）→ INVALID，链不重试。
-                # body 只读一次：解析出 code/error 后直接构造 FetchError（带服务端原因）。
+                # body 只读一次：解析出 code/error 后直接构造 ServiceError（带服务端原因）。
                 code, msg = "", None
                 try:
                     payload = json.loads(e.read().decode("utf-8", "replace"))
@@ -96,27 +96,27 @@ class MarkdownNewProvider(Provider):
                     pass
                 category = CATEGORY_INVALID if code in _INVALID_CODES else CATEGORY_HTTP
                 detail = f": {msg}" if msg else ""
-                raise FetchError(f"HTTP {e.code}{detail}", category, e.code) from e
-            raise self._map_error(e, timeout) from e
+                raise ServiceError(f"HTTP {e.code}{detail}", category, e.code) from e
+            raise map_http_error(e, timeout) from e
 
         if status != 200:
-            raise FetchError(f"{self.name} returned HTTP {status}", CATEGORY_HTTP, status)
+            raise ServiceError(f"{self.name} returned HTTP {status}", CATEGORY_HTTP, status)
 
         try:
             payload = json.loads(raw.decode("utf-8", "replace"))
         except ValueError:
-            raise FetchError(f"{self.name} returned invalid JSON", CATEGORY_EMPTY) from None
+            raise ServiceError(f"{self.name} returned invalid JSON", CATEGORY_EMPTY) from None
 
         if not isinstance(payload, dict) or not payload.get("success"):
             code = payload.get("code", "") if isinstance(payload, dict) else ""
             msg = payload.get("error") if isinstance(payload, dict) else None
             category = CATEGORY_INVALID if code in _INVALID_CODES else CATEGORY_HTTP
-            raise FetchError(msg or f"conversion failed (code={code or 'unknown'})", category)
+            raise ServiceError(msg or f"conversion failed (code={code or 'unknown'})", category)
 
         data = payload.get("data") or {}
         content = data.get("content") or ""
         if not content.strip():
-            raise FetchError(f"{self.name} returned empty content", CATEGORY_EMPTY)
+            raise ServiceError(f"{self.name} returned empty content", CATEGORY_EMPTY)
 
         tokens = data.get("tokens")
         return FetchResult(

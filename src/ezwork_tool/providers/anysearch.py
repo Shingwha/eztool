@@ -12,8 +12,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from ..base import ParamSpec, Provider, SearchResponse, SearchResult
 from ..errors import BackendError, NoResultsError, UsageError
-from .base import SearchResponse, SearchResult
+from ..registry import register
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -108,15 +109,15 @@ _ERROR_CODES: dict[int, str] = {
 
 
 def _api_key(cfg: dict) -> str | None:
-    return cfg.get("anysearch", {}).get("api_key")
+    return cfg.get("providers", {}).get("anysearch", {}).get("api_key")
 
 
-def has_credentials(cfg: dict) -> bool:
+def _has_credentials(cfg: dict) -> bool:
     """anysearch 段显式配置了 api_key（None 也算未配置；无 key 仍可匿名搜索）。"""
     return _api_key(cfg) is not None
 
 
-def test_credentials(cfg: dict) -> str:
+def _test_credentials(cfg: dict) -> str:
     """发最小请求验证凭证/连通性。匿名模式同样视为可用。"""
     api_key = _api_key(cfg)
     t0 = time.monotonic()
@@ -212,7 +213,7 @@ def _call_api(
 # ── 公开搜索入口 ──────────────────────────────────────────────────────────────
 
 
-def search(cfg: dict, query: str, opts: dict) -> SearchResponse:
+def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     """执行 AnySearch 搜索。
 
     opts 可选键（缺失用 .get 兜底）：
@@ -232,7 +233,7 @@ def search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 
     count = opts.get("count")
     if count is None:
-        count = cfg.get("anysearch", {}).get("max_results", DEFAULT_MAX_RESULTS)
+        count = cfg.get("providers", {}).get("anysearch", {}).get("max_results", DEFAULT_MAX_RESULTS)
     try:
         count = int(count)
     except (TypeError, ValueError):
@@ -297,3 +298,27 @@ def search(cfg: dict, query: str, opts: dict) -> SearchResponse:
             "request_id": data.get("request_id"),
         },
     )
+
+
+@register
+class AnySearchProvider(Provider):
+    """anysearch 搜索后端（匿名可用；tag 定向数据源）。"""
+
+    name = "anysearch"
+    capabilities = frozenset({"search"})
+    search_params = {
+        "tag": ParamSpec(metavar="TAG", help="[anysearch] 数据源标签（见 eztool tags）"),
+        "zone": ParamSpec(choices=("cn", "intl"), help="[anysearch] 区域"),
+        "language": ParamSpec(help="[anysearch] 语言，如 zh-CN"),
+        "params": ParamSpec(help="[anysearch] 额外参数 JSON"),
+        "anonymous": ParamSpec(action="store_true", help="[anysearch] 强制匿名模式"),
+    }
+
+    def has_credentials(self, cfg: dict) -> bool:
+        return _has_credentials(cfg)
+
+    def test_credentials(self, cfg: dict) -> str:
+        return _test_credentials(cfg)
+
+    def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
+        return _search(cfg, query, opts)
