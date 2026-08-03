@@ -95,14 +95,41 @@ class TestOpenAlexProvider(unittest.TestCase):
             resp = openalex._search({}, "q", {})
         self.assertEqual(resp.results[0].url, "https://doi.org/10.1234/x")
 
-    def test_year_author_oa_filters_and_sort(self):
+    def test_year_author_oa_filters_and_two_stage_sort(self):
         with _patch_urlopen(OPENALEX_BODY) as m:
             openalex._search({}, "q", {"year": "2020-2024", "author": "Vaswani",
                                        "oa": True, "sort": "cited"})
         url = _capture_url(m)
         self.assertIn("filter=from_publication_date%3A2020-01-01%2Cto_publication_date%3A2024-12-31%2Craw_author_name.search%3AVaswani%2Copen_access.is_oa%3Atrue", url)
-        self.assertIn("sort=cited_by_count%3Adesc", url)
+        # 两阶段排序：不再向 API 传全局 sort，而是放大 per-page 取相关性候选集
+        self.assertNotIn("sort=", url)
+        self.assertIn("per-page=50", url)  # count=10 → max(10*5, 50)
         self.assertNotIn("mailto", url)
+
+    def test_two_stage_sort_ranks_and_truncates(self):
+        # 候选集 3 条（引用 1/100/50），sort=cited count=2 → 取 [100, 50]
+        body = json.dumps({"meta": {"count": 3}, "results": [
+            {"display_name": "low", "publication_year": 2020, "cited_by_count": 1,
+             "doi": None, "id": "https://openalex.org/W1", "primary_location": None,
+             "open_access": {}, "authorships": []},
+            {"display_name": "high", "publication_year": 2020, "cited_by_count": 100,
+             "doi": None, "id": "https://openalex.org/W2", "primary_location": None,
+             "open_access": {}, "authorships": []},
+            {"display_name": "mid", "publication_year": 2020, "cited_by_count": 50,
+             "doi": None, "id": "https://openalex.org/W3", "primary_location": None,
+             "open_access": {}, "authorships": []},
+        ]}).encode()
+        with _patch_urlopen(body) as m:
+            resp = openalex._search({}, "q", {"sort": "cited", "count": 2})
+        self.assertEqual([r.title for r in resp.results], ["high", "mid"])
+        self.assertIn("per-page=50", _capture_url(m))
+
+    def test_relevance_keeps_api_default(self):
+        with _patch_urlopen(OPENALEX_BODY) as m:
+            openalex._search({}, "q", {})
+        url = _capture_url(m)
+        self.assertIn("per-page=10", url)
+        self.assertNotIn("sort=", url)
 
     def test_mailto_from_cfg(self):
         with _patch_urlopen(OPENALEX_BODY) as m:
@@ -225,15 +252,43 @@ class TestCrossrefProvider(unittest.TestCase):
         self.assertEqual(r.extra["oa_url"], "https://x.org/a.pdf")
         self.assertEqual(r.snippet, "We survey transformers .")  # JATS 剥标签（标签→空格）
 
-    def test_year_author_oa_filter_and_sort(self):
+    def test_year_author_oa_filter_and_two_stage_sort(self):
         with _patch_urlopen(CROSSREF_BODY) as m:
             crossref._search({}, "q", {"year": "2020-2024", "author": "Han",
                                        "oa": True, "sort": "cited"})
         url = _capture_url(m)
         self.assertIn("query.author=Han", url)
         self.assertIn("filter=from-pub-date%3A2020-01-01%2Cuntil-pub-date%3A2024-12-31%2Chas-full-text%3Atrue", url)
-        self.assertIn("sort=is-referenced-by-count", url)
-        self.assertIn("order=desc", url)
+        # 两阶段排序：不向 API 传全局 sort/order，rows 放大取相关性候选集
+        self.assertNotIn("sort=", url)
+        self.assertNotIn("order=", url)
+        self.assertIn("rows=50", url)
+
+    def test_figure_entries_filtered(self):
+        items = json.loads(CROSSREF_BODY)["message"]["items"]
+        fig = {"DOI": "10.1/fig", "title": ["Figure 6: Vision transformer (ViT) model structure."],
+               "container-title": [""], "issued": {"date-parts": [[2021]]},
+               "is-referenced-by-count": 0, "author": []}
+        body = json.dumps({"message": {"total-results": 2, "items": items + [fig]}}).encode()
+        with _patch_urlopen(body):
+            resp = crossref._search({}, "q", {})
+        self.assertEqual(len(resp.results), 1)  # Figure 条目被过滤
+        self.assertNotIn("Figure", resp.results[0].title)
+
+    def test_two_stage_sort_ranks_and_truncates(self):
+        base = json.loads(CROSSREF_BODY)["message"]["items"][0]
+        items = []
+        for i, c in ((1, 3), (2, 100), (3, 50)):
+            it = dict(base)
+            it["DOI"] = f"10.1/x{i}"
+            it["is-referenced-by-count"] = c
+            it["issued"] = {"date-parts": [[2020]]}
+            items.append(it)
+        body = json.dumps({"message": {"total-results": 3, "items": items}}).encode()
+        with _patch_urlopen(body) as m:
+            resp = crossref._search({}, "q", {"sort": "cited", "count": 2})
+        self.assertEqual([r.extra["citations"] for r in resp.results], [100, 50])
+        self.assertIn("rows=50", _capture_url(m))
 
     def test_year_fallback_published_online(self):
         item = json.loads(CROSSREF_BODY)["message"]["items"][0]

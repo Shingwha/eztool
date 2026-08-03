@@ -29,6 +29,27 @@ DEFAULT_BASE_URL = "https://api.crossref.org"
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_TIMEOUT = 30.0
 
+# 两阶段排序（同 openalex）：先按相关性取候选集，再在候选内按引用/日期重排
+SORT_CANDIDATE_MULT = 5
+SORT_CANDIDATE_MIN = 50
+SORT_CANDIDATE_MAX = 200  # Crossref rows 上限 1000，200 以内礼貌且够用
+
+# Crossref 常见垃圾条目：图的子条目（"Figure 6: ..."）不是论文
+_FIG_TITLE_RE = re.compile(r"^(Figure|Table|Fig\.?)\s*\d+", re.IGNORECASE)
+
+
+def _candidate_count(count: int) -> int:
+    return min(max(count * SORT_CANDIDATE_MULT, SORT_CANDIDATE_MIN), SORT_CANDIDATE_MAX)
+
+
+def _rank_and_truncate(results: list, sort: str, count: int) -> list:
+    """候选集内重排截断：cited 按引用降序、date 按年份降序，缺失键视为 0 排最后。"""
+    if sort == "cited":
+        results.sort(key=lambda r: (r.extra or {}).get("citations", 0), reverse=True)
+    elif sort == "date":
+        results.sort(key=lambda r: (r.extra or {}).get("year", 0), reverse=True)
+    return results[:count]
+
 # 摘要字段是 JATS XML 字符串，剥掉全部标签
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -103,12 +124,10 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
         params["filter"] = ",".join(filters)
 
     sort = opts.get("sort")
-    if sort == "cited":
-        params["sort"] = "is-referenced-by-count"
-        params["order"] = "desc"
-    elif sort == "date":
-        params["sort"] = "published"
-        params["order"] = "desc"
+    if sort in ("cited", "date"):
+        # 两阶段：先按 API 默认相关性取候选集，客户端在候选内重排截断。
+        # 直接 sort=is-referenced-by-count 会全局重排，多词查询时高引无关论文排最前。
+        params["rows"] = _candidate_count(count)
     # relevance → 不加，API 默认相关性排序
 
     url = f"{DEFAULT_BASE_URL}/works?{urllib.parse.urlencode(params)}"
@@ -141,6 +160,9 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
         title = (item.get("title") or [""])[0]
         if not title:
             title = "Untitled"
+
+        if _FIG_TITLE_RE.match(title):
+            continue  # 图/表子条目不是论文，丢弃
 
         authors = [
             f"{a.get('given', '')} {a.get('family', '')}".strip()
@@ -189,6 +211,9 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 
     if not results:
         raise NoResultsError("未找到结果")
+
+    if sort in ("cited", "date"):
+        results = _rank_and_truncate(results, sort, count)
 
     return SearchResponse(
         query=query.strip(),

@@ -129,13 +129,14 @@ eztool --version
 eztool paper "vision transformer"                      # 默认三源并行：openalex+arxiv+crossref
 eztool paper "LLM reasoning" --year 2024               # 年份或区间（2020-2024）
 eztool paper "attention" --author Vaswani              # 作者过滤
-eztool paper "survey" --sort cited --count 20          # 按引用数排序（relevance/cited/date）
+eztool paper "survey" --sort cited --count 20          # 相关性候选内按引用排序（relevance/cited/date）
 eztool paper "medical" --oa                            # 仅开放获取
 eztool paper "x" --backend openalex,crossref     # 指定源（或 eztool config set paper.providers ...）
 ```
 
 - 输出论文卡片：标题链接 / 作者（前 3 + et al.）/ 年份 / 期刊 / ⭐引用数 / DOI / OA 直链 / 摘要预览；多源合并时每条带 `[openalex]` 等来源标签，头部显示各源命中数。
 - 去重策略：同一 DOI 或同一 URL 或归一化标题只保留第一条（first wins）；openalex 与 crossref 的期刊版本按 DOI 去重，arXiv 预印本（无 DOI）独立保留。
+- `--sort cited/date` 是**两阶段排序**：先按相关性取候选集（count×5，50–200 条），再在候选内按引用数/年份重排——避免 API 全局重排把只命中个别词的高引无关论文（如 DESeq2）排最前。
 - 覆盖边界：OpenAlex 全学科（期刊+预印本）；arXiv 仅预印本；Crossref 期刊记录。**中文论文（CNKI/万方无公开 API）** 用 `eztool search "..." --tag academic.search`（anysearch）兜底。
 - 全部免凭证；`paper.providers` 可配置默认源列表。
 

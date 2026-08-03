@@ -28,6 +28,25 @@ DEFAULT_BASE_URL = "https://api.openalex.org"
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_TIMEOUT = 30.0
 
+# 两阶段排序：sort=cited/date 时先按相关性取候选集（per-page），再在候选内
+# 按引用/日期重排截断——避免 API 侧全局重排把只命中个别词的高引无关论文带上来
+SORT_CANDIDATE_MULT = 5   # 候选数 = count × 5
+SORT_CANDIDATE_MIN = 50
+SORT_CANDIDATE_MAX = 200  # OpenAlex per-page 上限
+
+
+def _candidate_count(count: int) -> int:
+    return min(max(count * SORT_CANDIDATE_MULT, SORT_CANDIDATE_MIN), SORT_CANDIDATE_MAX)
+
+
+def _rank_and_truncate(results: list, sort: str, count: int) -> list:
+    """候选集内重排截断：cited 按引用降序、date 按年份降序，缺失键视为 0 排最后。"""
+    if sort == "cited":
+        results.sort(key=lambda r: (r.extra or {}).get("citations", 0), reverse=True)
+    elif sort == "date":
+        results.sort(key=lambda r: (r.extra or {}).get("year", 0), reverse=True)
+    return results[:count]
+
 
 def _year_bounds(opts: dict) -> tuple[int, int] | None:
     """解析 year：`"2023"` → (2023, 2023)；`"2020-2024"` → (2020, 2024)；非法格式静默忽略。"""
@@ -76,7 +95,6 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
         timeout = DEFAULT_TIMEOUT
 
     params: dict[str, Any] = {"search": query.strip(), "per-page": count}
-
     mailto = cfg.get("providers", {}).get("openalex", {}).get("mailto")
     if mailto:
         params["mailto"] = mailto
@@ -98,10 +116,10 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
         params["filter"] = ",".join(filters)
 
     sort = opts.get("sort")
-    if sort == "cited":
-        params["sort"] = "cited_by_count:desc"
-    elif sort == "date":
-        params["sort"] = "publication_date:desc"
+    if sort in ("cited", "date"):
+        # 两阶段：API 按默认相关性返回候选集，客户端在候选内重排（见 _rank_and_truncate）。
+        # 直接传 sort=cited_by_count:desc 会全局重排，多词查询拆词匹配时高引无关论文排最前。
+        params["per-page"] = _candidate_count(count)
     # relevance → 不加 sort，API 默认相关性排序
 
     url = f"{DEFAULT_BASE_URL}/works?{urllib.parse.urlencode(params)}"
@@ -181,6 +199,9 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     if not results:
         raise NoResultsError("未找到结果")
 
+    if sort in ("cited", "date"):
+        results = _rank_and_truncate(results, sort, count)
+
     return SearchResponse(
         query=query.strip(),
         results=results,
@@ -197,7 +218,7 @@ class OpenAlexProvider(Provider):
     search_params = {
         "year": ParamSpec(metavar="YEAR", help="[openalex] 出版年份或区间，如 2023 或 2020-2024"),
         "author": ParamSpec(metavar="NAME", help="[openalex] 作者名过滤"),
-        "sort": ParamSpec(choices=("relevance", "cited", "date"), help="[openalex] 排序：relevance/cited/date"),
+        "sort": ParamSpec(choices=("relevance", "cited", "date"), help="[openalex] 排序：relevance/cited/date（cited/date 在相关性候选集内重排，避免高引无关论文）"),
         "oa": ParamSpec(action="store_true", help="[openalex] 仅开放获取论文"),
     }
 

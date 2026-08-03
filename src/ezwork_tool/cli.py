@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="论文源；auto=用 paper.providers 配置（默认 openalex,arxiv,crossref）；逗号分隔=多源并行汇总（如 openalex,arxiv）；单个=只用该源")
     pp.add_argument("--year", metavar="YEAR", help="出版年份或区间，如 2023 或 2020-2024")
     pp.add_argument("--author", metavar="NAME", help="作者名过滤")
-    pp.add_argument("--sort", choices=("relevance", "cited", "date"), help="排序：relevance（默认）/cited（引用数）/date（年份）")
+    pp.add_argument("--sort", choices=("relevance", "cited", "date"), help="排序：relevance（默认，按相关性）/cited（相关性候选内按引用数）/date（相关性候选内按年份）")
     pp.add_argument("--oa", action="store_true", help="仅开放获取论文")
     pp.add_argument("--count", type=int, default=None, help="每个数据源的结果数（默认 10）")
     pp.add_argument("--timeout", type=int, default=None, help="请求超时秒数")
