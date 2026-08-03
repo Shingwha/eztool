@@ -16,9 +16,11 @@ from . import (  # noqa: F401  (side-effect: register)
     markdown_new,
     mineru,
     openalex,
+    pdfinspector,
 )
 
 __all__ = [
     "anysearch", "arxiv", "crossref", "deepseek", "doubao",
     "firecrawl", "jina_reader", "markdown_new", "mineru", "openalex",
+    "pdfinspector",
 ]

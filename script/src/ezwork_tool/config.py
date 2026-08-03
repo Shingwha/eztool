@@ -29,6 +29,7 @@ DEFAULTS: dict[str, Any] = {
         "markdown": {"timeout": 30},
         "jina": {"api_key": None, "timeout": 10},
         "mineru": {"api_key": None, "timeout": 300},
+        "pdfinspector": {"timeout": 60},
         "openalex": {"mailto": None, "timeout": 30},
         "arxiv": {"timeout": 30},
         "crossref": {"timeout": 30},
@@ -36,7 +37,8 @@ DEFAULTS: dict[str, Any] = {
     # 回退链默认顺序：免费/匿名可用的服务在前，需 API Key 的在后
     "search": {"providers": ["anysearch", "doubao", "deepseek"], "timeout": 30},
     "fetch": {"providers": ["markdown", "jina", "firecrawl"], "timeout": 30},
-    "convert": {"providers": ["markdown", "mineru"], "timeout": 60},
+    # convert：本地解析（pdfinspector）优先，失败/扫描件降级云端
+    "convert": {"providers": ["pdfinspector", "markdown", "mineru"], "timeout": 60},
     "paper": {"providers": ["openalex", "arxiv", "crossref"], "timeout": 30},
 }
 

@@ -14,7 +14,7 @@ eztool search "q" --backend openalex,arxiv       # 多后端并行汇总（去�
 eztool paper "vision transformer"                # 论文搜索：openalex+arxiv+crossref 三源汇总
 eztool paper "LLM reasoning" --year 2024 --sort cited --oa
 eztool fetch https://example.com/article         # URL → Markdown
-eztool convert report.pdf                        # 本地文件 → Markdown（markdown.new→MinerU 回退链）
+eztool convert report.pdf                        # 本地文件 → Markdown（pdfinspector 本地优先 → markdown.new → MinerU 回退链）
 eztool convert 报告.docx --out report.md          # 写入文件而非 stdout
 eztool tags                                      # 数据源标签目录
 ```
@@ -32,7 +32,8 @@ eztool tags                                      # 数据源标签目录
 ## 安装
 
 ```bash
-cd script && uv tool install .
+cd script && uv tool install .                     # 基础安装
+uv tool install --extra local .                    # 可选：本地 PDF 解析（pdf-inspector）
 eztool --help
 ```
 

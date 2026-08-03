@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     fp.set_defaults(func=cmd_fetch)
 
     # ── convert ──────────────────────────────────────────────
-    vp = sub.add_parser("convert", help="本地文件转 Markdown（markdown.new→MinerU 回退；MinerU 无 Token ≤10MB，配 Token ≤200MB/批量/HTML）")
+    vp = sub.add_parser("convert", help="本地文件转 Markdown（pdfinspector 本地解析优先 → markdown.new → MinerU OCR 回退）")
     vp.add_argument("file", nargs="?", help="本地文件路径（PDF/DOCX/XLSX/图片/CSV/JSON 等）")
     vp.add_argument("--out", metavar="PATH", help="写入该文件而非输出到 stdout")
     vp.add_argument("--timeout", type=int, default=None, help="超时秒数（覆盖配置，默认 60）")

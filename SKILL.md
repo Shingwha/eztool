@@ -29,12 +29,13 @@ description: >-
 | AI 综合回答 + 来源列表 | `eztool search ... --backend deepseek` |
 | 多后端同时搜、合并去重 | `eztool search ... --backend openalex,arxiv` |
 | 读取网页 / 文章全文 | `eztool fetch <url>` |
-| 本地文件（PDF/DOCX/XLSX/图片/CSV 等）转 Markdown | `eztool convert <file>`（markdown.new→MinerU 回退，≤10MB） |
+| 本地文件（PDF/DOCX/XLSX/图片/CSV 等）转 Markdown | `eztool convert <file>`（pdfinspector 本地优先 → markdown.new → MinerU 回退） |
 
 ## 安装
 
 ```bash
-cd ezwork-tool/script && uv tool install .
+cd ezwork-tool/script && uv tool install .           # 基础安装
+uv tool install --extra local .                      # 可选：本地 PDF 解析（pdf-inspector）
 eztool --version
 ```
 
