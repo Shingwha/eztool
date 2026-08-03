@@ -33,7 +33,7 @@ eztool tags                                      # 数据源标签目录
 
 ```bash
 cd script && uv tool install .                     # 基础安装
-uv tool install --extra local .                    # 可选：本地 PDF 解析（pdf-inspector）
+uv tool install ".[local]"                          # 可选：本地 PDF 解析（pdf-inspector）
 eztool --help
 ```
 

@@ -35,7 +35,7 @@ description: >-
 
 ```bash
 cd ezwork-tool/script && uv tool install .           # 基础安装
-uv tool install --extra local .                      # 可选：本地 PDF 解析（pdf-inspector）
+uv tool install ".[local]"                            # 可选：本地 PDF 解析（pdf-inspector）
 eztool --version
 ```
 
@@ -75,7 +75,7 @@ eztool tags                                        # 数据源标签清单（40+
 | 配置项大全 / 配置命令 / 限流配额 | `references/configuration.md` |
 | 后端能力矩阵 / 参数归属 / paper 细节 / 输出格式 | `references/backends.md` |
 | 安装 / 测试 / 更新 / 架构（开发者） | `references/development.md` |
-| 代码（repo 即 skill 的实现） | `script/`（`cd script && uv tool install .` 安装） |
+| 代码（repo 即 skill 的实现） | `script/`（`cd script && uv tool install ".[local]"` 安装，[local] 带 pdf-inspector） |
 
 ## Notes
 

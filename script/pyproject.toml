@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 # 可选依赖：本地 PDF 解析（Firecrawl pdf-inspector，Rust 核心，无 OCR）。
-# Windows/macOS/glibc-Linux 有官方轮子：uv tool install --extra local .
+# Windows/macOS/glibc-Linux 有官方轮子：uv tool install ".[local]"
 # musl（Alpine 等）无 musllinux 轮子，源码构建需 Rust 工具链 —— 不装 extra 即可，
 # eztool 的 pdfinspector provider 会自动检测缺失并在 convert 回退链中跳过。
 [project.optional-dependencies]
