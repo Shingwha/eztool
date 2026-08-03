@@ -9,7 +9,7 @@
 | provider | search.web | search.image | search.paper | search.data | convert.page | convert.file | category_params |
 |---|---|---|---|---|---|---|---|
 | `doubao` | ✅ | ✅ | | | | | image: width_min/width_max/height_min/height_max/shapes |
-| `anysearch` | ✅ | | | ✅ | | | data: tag |
+| `anysearch` | ✅ | | | ✅ | | | data: tag / params |
 | `deepseek` | ✅ | | | | | | — |
 | `openalex` | | | ✅ | | | | —（year/author/sort/oa 是 paper 命令专属参数） |
 | `arxiv` | | | ✅ | | | | — |
@@ -42,7 +42,7 @@
 
 ## 参数归属
 
-- **类别共享**：`--providers`（web/image/paper/data/convert）、`--count`（web/image/paper/data）、`--full`（web/paper）、`--timeout`（除 tags 外全部）。
+- **类别共享**：`--providers`（web/image/paper/data/convert）、`--count`（web/image/paper/data，默认值已合理，如非必要不加）、`--timeout`（除 tags 外全部）。
 - **paper 命令专属**（不属于任何 provider）：`--year` / `--author` / `--sort` / `--oa`，由 api 统一透传给三源。
 - **provider 特有**（注册表自动并入对应子命令）：`search image` 的 `--width-min/--width-max/--height-min/--height-max/--shapes`（doubao）、`search data` 的 `--tag`（anysearch）。
 - 参数面按类别定制，错配参数从 CLI 模型上消失；程序化调用传错归属仍会报错（exit 2），不静默忽略。
@@ -65,7 +65,7 @@ eztool search paper "x" --providers openalex,crossref       # 指定源（或 co
 
 ## 输出格式
 
-输出统一为 Markdown：`### Answer`（deepseek 回答，可选）+ `### Results (N)` 编号列表 + `---` 元数据尾行（backend / total / 耗时 / request_id）。图片结果带直链（`![img](url)`）+ 尺寸/形状；data 结果带来源标注。无 `--json`，唯一格式就是 Markdown。
+输出统一为 Markdown：`### Answer`（deepseek 回答，可选）+ `### Results (N)` 编号列表 + `---` 元数据尾行（backend / total / 耗时 / request_id）。图片结果带直链（`![img](url)`）+ 尺寸/形状；data 结果带来源标注。**结果默认完整输出，不截断**（v0.2.0 起无 `--full`）。无 `--json`，唯一格式就是 Markdown。
 
 ## 退出码
 

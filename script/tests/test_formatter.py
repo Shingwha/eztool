@@ -16,21 +16,18 @@ def _resp(results=None, answer=None):
 
 
 class TestFormatSearch(unittest.TestCase):
-    def test_snippet_one_line_and_truncated(self):
+    def test_snippet_one_line_not_truncated(self):
         snip = "line one\nline two " + "x" * 400
         out = format_search(_resp([SearchResult(title="t", url="u", snippet=snip)]))
-        self.assertNotIn("line one\nline two", out)
+        self.assertNotIn("line one\nline two", out)   # 多行压成单行
         self.assertIn("line one line two", out)
-        result_line = next(l for l in out.splitlines() if "— " in l)
-        self.assertTrue(result_line.endswith("…"))
+        self.assertIn("x" * 400, out)                  # 不截断，完整保留
 
-    def test_content_truncated_unless_full(self):
+    def test_content_full_by_default(self):
         content = "y" * 1000
         r = SearchResult(title="t", url="u", snippet="s", content=content)
         out = format_search(_resp([r]))
-        self.assertIn("y" * 300 + "…", out)
-        full = format_search(_resp([r]), full=True)
-        self.assertIn("y" * 1000, full)
+        self.assertIn("y" * 1000, out)                 # 默认完整输出
 
     def test_answer_section_only_when_present(self):
         out = format_search(_resp([SearchResult(title="t", url="u")], answer="Answer text"))

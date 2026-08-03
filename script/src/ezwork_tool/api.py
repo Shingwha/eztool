@@ -178,7 +178,7 @@ def _paper(cfg: dict, query: str, opts: dict) -> SearchResponse:
     """论文搜索：默认并发搜 openalex + arxiv + crossref，合并去重。
 
     opts 键：providers（逗号分隔，覆盖 search.paper.providers 配置）、count、
-    timeout、year、author、sort（relevance/cited/date）、oa、full。
+    timeout、year、author、sort（relevance/cited/date）、oa。
     """
     section = _section(cfg, "search.paper")
     popts = _provider_opts(cfg, section)

@@ -32,7 +32,6 @@ _CATEGORY_HELP = {
 
 # search 子命令的类别共享参数（§4.5 适用性矩阵）
 _COUNT_CATEGORIES = {"search.web", "search.image", "search.paper", "search.data"}
-_FULL_CATEGORIES = {"search.web", "search.paper"}
 
 
 def _add_param(parser: argparse.ArgumentParser, pname: str, spec) -> None:
@@ -67,9 +66,6 @@ def build_parser() -> argparse.ArgumentParser:
         csp.add_argument("--providers", help="覆盖回退链，逗号分隔（默认按类别注册顺序）")
         if category in _COUNT_CATEGORIES:
             csp.add_argument("--count", type=int, default=None, help="结果条数")
-        if category in _FULL_CATEGORIES:
-            csp.add_argument("--full", action="store_true",
-                             help="显示完整正文/摘要而非预览")
         csp.add_argument("--timeout", type=int, default=None,
                          help="请求超时秒数（覆盖配置）")
         if category == "search.paper":
@@ -123,19 +119,19 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_search(args: argparse.Namespace) -> None:
     cfg = cfgmod.load_config()
     opts = {pname: getattr(args, pname, None) for pname in category_params(args.category)}
-    for k in ("count", "timeout", "full", "providers", "year", "author", "sort", "oa"):
+    for k in ("count", "timeout", "providers", "year", "author", "sort", "oa"):
         v = getattr(args, k, None)
         if v is not None:
             opts[k] = v
     resp = api.search_category(cfg, args.category, args.query, opts)
     if args.category == "search.paper":
-        print(format_paper(resp, full=bool(args.full)))
+        print(format_paper(resp))
     elif args.category == "search.image":
-        print(format_image(resp, full=bool(args.full)))
+        print(format_image(resp))
     elif args.category == "search.data":
-        print(format_data(resp, full=bool(args.full)))
+        print(format_data(resp))
     else:
-        print(format_search(resp, full=bool(args.full)))
+        print(format_search(resp))
 
 
 # ── tags ─────────────────────────────────────────────────────

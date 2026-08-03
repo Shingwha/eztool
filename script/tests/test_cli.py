@@ -32,7 +32,7 @@ class TestCommandTree(unittest.TestCase):
 
     def test_web_params(self):
         web = _subparsers(self.subs["search"])["web"]
-        self.assertEqual(_args(web), {"query", "providers", "count", "full", "timeout"})
+        self.assertEqual(_args(web), {"query", "providers", "count", "timeout"})
 
     def test_image_params_include_provider_specific(self):
         image = _subparsers(self.subs["search"])["image"]
@@ -44,11 +44,12 @@ class TestCommandTree(unittest.TestCase):
     def test_paper_params_command_specific(self):
         paper = _subparsers(self.subs["search"])["paper"]
         self.assertLessEqual({"year", "author", "sort", "oa"}, _args(paper))
-        self.assertIn("full", _args(paper))
+        self.assertNotIn("full", _args(paper))
 
     def test_data_params_include_tag(self):
         data = _subparsers(self.subs["search"])["data"]
         self.assertIn("tag", _args(data))
+        self.assertIn("params", _args(data))
         self.assertNotIn("full", _args(data))
 
     def test_convert_params(self):
@@ -90,6 +91,13 @@ class TestCommandTree(unittest.TestCase):
         ns = self.p.parse_args(["config", "test", "--providers", "doubao"])
         self.assertEqual(ns.providers, "doubao")
 
+    def test_no_full_flag_anywhere(self):
+        """v0.2.0 后 --full 已移除：所有子命令默认完整输出，无截断参数。"""
+        ns = self.p.parse_args(["search", "image", "猫"])
+        self.assertFalse(hasattr(ns, "full"))
+        ns2 = self.p.parse_args(["search", "data", "AAPL"])
+        self.assertFalse(hasattr(ns2, "full"))
+
 
 class TestCmdSearch(unittest.TestCase):
     def test_web_uses_format_search(self):
@@ -97,7 +105,7 @@ class TestCmdSearch(unittest.TestCase):
                               metadata={"backend": "aaa"})
         with mock.patch.object(api, "search_category", return_value=resp) as sc, \
              mock.patch("ezwork_tool.cli.format_search", return_value="ok") as fmt:
-            args = argparse.Namespace(category="search.web", query="q", full=False,
+            args = argparse.Namespace(category="search.web", query="q",
                                       count=None, timeout=None, providers=None)
             cli.cmd_search(args)
             sc.assert_called_once()
@@ -108,7 +116,7 @@ class TestCmdSearch(unittest.TestCase):
         resp = SearchResponse(query="q", metadata={"backend": "doubao"})
         with mock.patch.object(api, "search_category", return_value=resp), \
              mock.patch("ezwork_tool.cli.format_image", return_value="ok") as fmt:
-            args = argparse.Namespace(category="search.image", query="q", full=False,
+            args = argparse.Namespace(category="search.image", query="q",
                                       count=None, timeout=None, providers=None,
                                       width_min=None, width_max=None,
                                       height_min=None, height_max=None, shapes=None)
@@ -119,7 +127,7 @@ class TestCmdSearch(unittest.TestCase):
         resp = SearchResponse(query="q", metadata={"backend": "openalex"})
         with mock.patch.object(api, "search_category", return_value=resp), \
              mock.patch("ezwork_tool.cli.format_paper", return_value="ok") as fmt:
-            args = argparse.Namespace(category="search.paper", query="q", full=False,
+            args = argparse.Namespace(category="search.paper", query="q",
                                       count=None, timeout=None, providers=None,
                                       year=None, author=None, sort=None, oa=False)
             cli.cmd_search(args)

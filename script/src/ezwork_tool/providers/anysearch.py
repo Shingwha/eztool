@@ -317,6 +317,10 @@ class AnySearchProvider(Provider):
     category_params = {
         "search.data": {
             "tag": ParamSpec(metavar="TAG", help="数据源标签（见 eztool search tags）"),
+            "params": ParamSpec(
+                metavar="JSON",
+                help="额外参数 JSON，如 {\"type\": \"quote\"}（部分标签必填，见 search tags 说明）",
+            ),
         },
     }
 

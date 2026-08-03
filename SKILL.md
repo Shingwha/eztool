@@ -31,14 +31,15 @@ description: >-
 
 ## 完整命令参考
 
+> `--count` 默认值已合理（网页/图片/数据 10，论文每源 10），如非必要不要加。
+
 ### `eztool search web <query>` — 通用网页搜索
 回退链 doubao → anysearch → deepseek（免费/匿名优先，失败自动换下一个）。
 
 | 参数 | 说明 |
 |---|---|
 | `--providers a,b` | 覆盖回退链（逗号分隔） |
-| `--count N` | 结果条数 |
-| `--full` | 显示完整正文而非预览 |
+| `--count N` | 结果条数（如非必要不加） |
 | `--timeout N` | 请求超时秒数（覆盖配置） |
 
 ### `eztool search image <query>` — 图片搜索
@@ -59,7 +60,7 @@ openalex + arxiv + crossref 三源**并行**搜索、按 DOI 去重合并（全�
 | `--author NAME` | 作者名过滤 |
 | `--sort relevance\|cited\|date` | 排序（cited/date 在相关性候选集内重排） |
 | `--oa` | 仅开放获取论文 |
-| `--providers a,b` / `--count N` / `--full` / `--timeout N` | 同上 |
+| `--providers a,b` / `--count N` / `--timeout N` | 同上 |
 
 ### `eztool search data <query>` — 专业数据源
 anysearch，40+ 标签定向数据源（学术/代码/金融/CVE/法律/旅行…）。
@@ -67,7 +68,8 @@ anysearch，40+ 标签定向数据源（学术/代码/金融/CVE/法律/旅行�
 | 参数 | 说明 |
 |---|---|
 | `--tag TAG` | 数据源标签（`eztool search tags` 查看清单） |
-| `--providers a,b` / `--count N` / `--timeout N` | 同上 |
+| `--params '{"k":"v"}'` | 标签额外参数（部分标签必填，如 `finance.quote` 需 `{"type":"quote"}`） |
+| `--providers a,b` / `--count N` / `--timeout N` | 同上（--count 如非必要不加） |
 
 ### `eztool search tags` — 列出全部数据源标签（无参数）
 

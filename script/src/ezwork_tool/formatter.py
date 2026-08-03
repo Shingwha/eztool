@@ -1,10 +1,9 @@
-"""唯一输出格式：Markdown（无 --json）。"""
+"""唯一输出格式：Markdown（无 --json，结果默认完整输出不截断）。"""
 
 from __future__ import annotations
 
 from .base import SearchResponse
 
-SNIPPET_LIMIT = 300
 
 
 def _one_line(text: str) -> str:
@@ -12,7 +11,7 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())
 
 
-def format_search(resp: SearchResponse, full: bool = False) -> str:
+def format_search(resp: SearchResponse) -> str:
     merged = "," in str((resp.metadata or {}).get("backend", ""))
     lines: list[str] = [f"## Search Results: {resp.query}", ""]
     if resp.answer:
@@ -25,16 +24,10 @@ def format_search(resp: SearchResponse, full: bool = False) -> str:
             if merged and r.source:
                 line += f" **[{r.source}]**"
             if r.snippet:
-                snip = r.snippet if full else _one_line(r.snippet)
-                if not full and len(snip) > SNIPPET_LIMIT:
-                    snip = snip[:SNIPPET_LIMIT] + "…"
-                line += f" — {snip}"
+                line += f" — {_one_line(r.snippet)}"
             lines.append(line)
             if r.content:
-                body = r.content
-                if not full and len(body) > SNIPPET_LIMIT:
-                    body = body[:SNIPPET_LIMIT] + "…"
-                lines.append(f"   {body}")
+                lines.append(f"   {r.content}")
             if r.extra:
                 extra = " · ".join(f"{k}={v}" for k, v in r.extra.items() if v)
                 if extra:
@@ -52,7 +45,7 @@ def format_search(resp: SearchResponse, full: bool = False) -> str:
     return "\n".join(lines)
 
 
-def format_paper(resp: SearchResponse, full: bool = False) -> str:
+def format_paper(resp: SearchResponse) -> str:
     """论文卡片格式（多源合并时带 per-provider 计数与 source 标签）。"""
     meta = resp.metadata or {}
     backend = meta.get("backend", "?")
@@ -100,11 +93,8 @@ def format_paper(resp: SearchResponse, full: bool = False) -> str:
             lines.append(f"   [{r.source}]")
 
         if r.snippet:
-            snip = _one_line(r.snippet)
-            if not full and len(snip) > SNIPPET_LIMIT:
-                snip = snip[:SNIPPET_LIMIT] + "…"
             tag = f"[{r.source}] " if merged and r.source else ""
-            lines.append(f"   {tag}{snip}")
+            lines.append(f"   {tag}{_one_line(r.snippet)}")
     if resp.results:
         lines.append("")
 
@@ -138,7 +128,7 @@ def _meta_footer(meta: dict | None) -> str:
     return "---\n" + " · ".join(meta_parts)
 
 
-def format_image(resp: SearchResponse, full: bool = False) -> str:
+def format_image(resp: SearchResponse) -> str:
     """图片结果：直链（可渲染）+ 尺寸/形状元数据。"""
     lines: list[str] = [f"## Images: {resp.query}", ""]
     if resp.results:
@@ -163,7 +153,7 @@ def format_image(resp: SearchResponse, full: bool = False) -> str:
     return "\n".join(lines)
 
 
-def format_data(resp: SearchResponse, full: bool = False) -> str:
+def format_data(resp: SearchResponse) -> str:
     """专业数据源结果：带来源标注（provider 名）。"""
     lines: list[str] = [f"## Data Results: {resp.query}", ""]
     if resp.results:
@@ -174,10 +164,7 @@ def format_data(resp: SearchResponse, full: bool = False) -> str:
             if r.source:
                 line += f" **[{r.source}]**"
             if r.snippet:
-                snip = _one_line(r.snippet)
-                if not full and len(snip) > SNIPPET_LIMIT:
-                    snip = snip[:SNIPPET_LIMIT] + "…"
-                line += f" — {snip}"
+                line += f" — {_one_line(r.snippet)}"
             lines.append(line)
         lines.append("")
     lines.append(_meta_footer(resp.metadata))
