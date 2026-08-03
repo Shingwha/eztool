@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
+from ..base import Provider, SearchResponse, SearchResult
 from ..errors import (
     CATEGORY_HTTP,
     CATEGORY_NETWORK,
@@ -214,13 +214,8 @@ class OpenAlexProvider(Provider):
     """openalex 学术论文搜索后端（免凭证；年份/作者/OA 过滤 + 引用/日期排序）。"""
 
     name = "openalex"
-    capabilities = frozenset({"search"})
-    search_params = {
-        "year": ParamSpec(metavar="YEAR", help="[openalex] 出版年份或区间，如 2023 或 2020-2024"),
-        "author": ParamSpec(metavar="NAME", help="[openalex] 作者名过滤"),
-        "sort": ParamSpec(choices=("relevance", "cited", "date"), help="[openalex] 排序：relevance/cited/date（cited/date 在相关性候选集内重排，避免高引无关论文）"),
-        "oa": ParamSpec(action="store_true", help="[openalex] 仅开放获取论文"),
-    }
+    categories = frozenset({"search.paper"})
+    # year/author/sort/oa 是 search paper 命令专属参数（cli 层定义），provider 直接读 opts
 
     def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
         return _search(cfg, query, opts)

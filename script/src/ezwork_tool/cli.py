@@ -1,8 +1,10 @@
-"""eztool 统一入口：search / fetch / convert / tags / config。
+"""eztool 统一入口：search（web/image/paper/data/tags）+ convert + config。
 
-CLI 全部消费统一注册表（registry）：search 子命令的参数与 --backend 候选
-由各服务商的 ``search_params`` / ``capabilities`` 声明自动生成——
-新增服务商无需改这里。
+命令面 = 域（顶层 3 个）+ 子命令（搜索类别）：search 子命令由注册表的
+``search_categories()`` 自动生成，每个子命令的参数面 = 类别共享参数（§4.5
+适用性矩阵）+ ``category_params(category)`` 自动并入——新增类别/provider
+无需改这里。convert 按输入类型自动路由（URL → convert.page；本地路径 →
+convert.file）。无任何 alias / 兼容分支。
 """
 
 from __future__ import annotations
@@ -16,87 +18,89 @@ from . import __version__
 from . import api
 from . import config as cfgmod
 from .errors import EztoolError, UsageError
-from .formatter import format_paper, format_search, format_tags
-from .registry import (
-    all_search_params,
-    create_service,
-    search_services,
-)
+from .formatter import format_data, format_image, format_paper, format_search, format_tags
 from .providers.anysearch import KNOWN_TAGS
+from .registry import category_params, create_service, search_categories, service_names
+
+# 类别 → 子命令说明（search 子命令自动生成时的 help）
+_CATEGORY_HELP = {
+    "search.web": "通用网页搜索",
+    "search.image": "图片搜索（直链 + 尺寸/形状元数据）",
+    "search.paper": "论文搜索（三源并行汇总 openalex+arxiv+crossref）",
+    "search.data": "专业数据源搜索（--tag 定向数据源）",
+}
+
+# search 子命令的类别共享参数（§4.5 适用性矩阵）
+_COUNT_CATEGORIES = {"search.web", "search.image", "search.paper", "search.data"}
+_FULL_CATEGORIES = {"search.web", "search.paper"}
+
+
+def _add_param(parser: argparse.ArgumentParser, pname: str, spec) -> None:
+    """按 ParamSpec 声明生成 argparse 参数。"""
+    kwargs = {"help": spec.help, "default": None}
+    if spec.action == "store_true":
+        kwargs["action"] = "store_true"
+    else:
+        kwargs["type"] = spec.type
+        if spec.choices:
+            kwargs["choices"] = spec.choices
+        if spec.metavar:
+            kwargs["metavar"] = spec.metavar
+    parser.add_argument("--" + pname.replace("_", "-"), **kwargs)
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="eztool",
-        description="统一搜索（doubao / deepseek / anysearch / openalex / arxiv / crossref）+ 论文汇总搜索（paper）+ URL 抓取转 Markdown。一个工具，一个 skill。",
+        description="搜索（web/image/paper/data/tags）+ 转换（URL 或本地文件 → Markdown）+ 配置。一个命令完成搜索、读取与转格式。",
     )
     p.add_argument("--version", action="version", version=f"eztool {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
-    # ── search ──────────────────────────────────────────────
-    # 特有参数来自注册表：各搜索服务商声明的 search_params 自动展开
-    sp = sub.add_parser("search", help="搜索（--backend 选后端，默认 auto 自动回退）")
-    sp.add_argument("query", help="搜索词")
-    sp.add_argument("--backend", default="auto",
-                    help="后端；auto=按 search.providers 链失败回退；逗号分隔=多后端并行汇总（如 openalex,arxiv）")
-    sp.add_argument("--providers", help="覆盖搜索回退链，逗号分隔（仅 auto 模式生效）")
-    sp.add_argument("--count", type=int, default=None,
-                    help="结果条数（doubao≤50 / anysearch≤20 / deepseek 忽略）")
-    sp.add_argument("--timeout", type=int, default=None, help="请求超时秒数（覆盖后端默认）")
-    sp.add_argument("--full", action="store_true", help="显示完整正文而非 300 字预览")
-    for pname, spec in all_search_params().items():
-        kwargs = {"help": spec.help, "default": None}
-        if spec.action == "store_true":
-            kwargs["action"] = "store_true"
-        else:
-            kwargs["type"] = spec.type
-            if spec.choices:
-                kwargs["choices"] = spec.choices
-            if spec.metavar:
-                kwargs["metavar"] = spec.metavar
-        sp.add_argument("--" + pname.replace("_", "-"), **kwargs)
-    sp.set_defaults(func=cmd_search)
+    # ── search 域：子命令由注册表 search_categories() 自动生成 ──
+    sp = sub.add_parser("search", help="搜索域：web / image / paper / data / tags")
+    ssub = sp.add_subparsers(dest="search_cmd", required=True)
+    for category in search_categories():
+        name = category.split(".")[1]
+        csp = ssub.add_parser(name, help=_CATEGORY_HELP.get(category, category))
+        csp.add_argument("query", help="搜索词")
+        csp.add_argument("--providers", help="覆盖回退链，逗号分隔（默认按类别注册顺序）")
+        if category in _COUNT_CATEGORIES:
+            csp.add_argument("--count", type=int, default=None, help="结果条数")
+        if category in _FULL_CATEGORIES:
+            csp.add_argument("--full", action="store_true",
+                             help="显示完整正文/摘要而非预览")
+        csp.add_argument("--timeout", type=int, default=None,
+                         help="请求超时秒数（覆盖配置）")
+        if category == "search.paper":
+            csp.add_argument("--year", metavar="YEAR",
+                             help="出版年份或区间，如 2023 或 2020-2024")
+            csp.add_argument("--author", metavar="NAME", help="作者名过滤")
+            csp.add_argument("--sort", choices=("relevance", "cited", "date"),
+                             help="排序：relevance（默认）/cited（候选内按引用数）/date（候选内按年份）")
+            csp.add_argument("--oa", action="store_true", help="仅开放获取论文")
+        for pname, spec in category_params(category).items():
+            _add_param(csp, pname, spec)
+        csp.set_defaults(func=cmd_search, category=category)
 
-    # ── fetch ───────────────────────────────────────────────
-    fp = sub.add_parser("fetch", help="抓取 URL 转 Markdown（markdown.new→jina→firecrawl 回退链，免费优先）")
-    fp.add_argument("url", nargs="?", help="要抓取的 URL")
-    fp.add_argument("--timeout", type=int, default=None, help="超时秒数（覆盖配置）")
-    fp.add_argument("--providers", help="覆盖回退链，逗号分隔")
-    fp.add_argument("--list-providers", action="store_true", help="列出可用 provider")
-    fp.set_defaults(func=cmd_fetch)
-
-    # ── convert ──────────────────────────────────────────────
-    vp = sub.add_parser("convert", help="本地文件转 Markdown（pdfinspector 本地解析优先 → markdown.new → MinerU OCR 回退）")
-    vp.add_argument("file", nargs="?", help="本地文件路径（PDF/DOCX/XLSX/图片/CSV/JSON 等）")
-    vp.add_argument("--out", metavar="PATH", help="写入该文件而非输出到 stdout")
-    vp.add_argument("--timeout", type=int, default=None, help="超时秒数（覆盖配置，默认 60）")
-    vp.add_argument("--providers", help="覆盖回退链，逗号分隔")
-    vp.add_argument("--list-providers", action="store_true", help="列出支持文件转换的 provider")
-    vp.set_defaults(func=cmd_convert)
-
-    # ── tags ────────────────────────────────────────────────
-    tp = sub.add_parser("tags", help="列出 AnySearch 数据源标签")
+    # tags：列出全部数据源标签（无参数）
+    tp = ssub.add_parser("tags", help="列出全部数据源标签")
     tp.set_defaults(func=cmd_tags)
 
-    # ── paper ───────────────────────────────────────────────
-    pp = sub.add_parser("paper", help="论文搜索（默认并行汇总 openalex+arxiv+crossref，去重合并）")
-    pp.add_argument("query", help="论文搜索词")
-    pp.add_argument("--backend", default="auto",
-                    help="论文源；auto=用 paper.providers 配置（默认 openalex,arxiv,crossref）；逗号分隔=多源并行汇总（如 openalex,arxiv）；单个=只用该源")
-    pp.add_argument("--year", metavar="YEAR", help="出版年份或区间，如 2023 或 2020-2024")
-    pp.add_argument("--author", metavar="NAME", help="作者名过滤")
-    pp.add_argument("--sort", choices=("relevance", "cited", "date"), help="排序：relevance（默认，按相关性）/cited（相关性候选内按引用数）/date（相关性候选内按年份）")
-    pp.add_argument("--oa", action="store_true", help="仅开放获取论文")
-    pp.add_argument("--count", type=int, default=None, help="每个数据源的结果数（默认 10）")
-    pp.add_argument("--timeout", type=int, default=None, help="请求超时秒数")
-    pp.add_argument("--full", action="store_true", help="显示完整摘要而非 300 字预览")
-    pp.set_defaults(func=cmd_paper)
+    # ── convert 域：URL 或本地文件 → Markdown（运行时自动识别）──
+    vp = sub.add_parser("convert", help="URL 或本地文件 → Markdown（http(s):// 走在线抓取链，本地路径走本地解析链）")
+    vp.add_argument("target", nargs="?", help="URL（http/https）或本地文件路径")
+    vp.add_argument("--out", metavar="PATH", help="写入该文件而非输出到 stdout")
+    vp.add_argument("--timeout", type=int, default=None, help="超时秒数（覆盖配置）")
+    vp.add_argument("--providers", help="覆盖回退链，逗号分隔")
+    vp.add_argument("--list-providers", action="store_true",
+                    help="列出两类转换链的可用 provider")
+    vp.set_defaults(func=cmd_convert)
 
-    # ── config ──────────────────────────────────────────────
+    # ── config 域 ──
     cp = sub.add_parser("config", help="配置管理（~/.config/ezwork-tool/config.json）")
     csub = cp.add_subparsers(dest="config_cmd", required=True)
-    csub.add_parser("path", help="显示配置文件路径").set_defaults(func=cmd_config_path)
-    csub.add_parser("show", help="显示全部配置（secret 脱敏）").set_defaults(func=cmd_config_show)
+    csub.add_parser("show", help="显示全部配置 + 配置文件路径").set_defaults(func=cmd_config_show)
     cs = csub.add_parser("set", help="设置键值，如 providers.doubao.api_key（省略值则交互输入）")
     cs.add_argument("key")
     cs.add_argument("value", nargs="?")
@@ -107,49 +111,51 @@ def build_parser() -> argparse.ArgumentParser:
     cr = csub.add_parser("reset", help="重置键为默认值")
     cr.add_argument("key")
     cr.set_defaults(func=cmd_config_reset)
-    csub.add_parser("clear", help="删除整个配置文件").set_defaults(func=cmd_config_clear)
-    ct = csub.add_parser("test", help="验证已配置后端的凭证（--backend 只测一个）")
-    ct.add_argument("--backend", choices=search_services())
+    ct = csub.add_parser("test", help="验证已配置 provider 的凭证（--providers 可指定单个）")
+    ct.add_argument("--providers", help="只测指定 provider（逗号分隔）")
     ct.set_defaults(func=cmd_config_test)
+    csub.add_parser("clear", help="删除整个配置文件").set_defaults(func=cmd_config_clear)
     return p
 
 
-# ── search ─────────────────────────────────────────────────
+# ── search ──────────────────────────────────────────────────
 
 def cmd_search(args: argparse.Namespace) -> None:
     cfg = cfgmod.load_config()
-    opts = {name: getattr(args, name, None) for name in all_search_params()}
-    opts.update({
-        "count": args.count, "timeout": args.timeout, "full": args.full,
-        "providers": getattr(args, "providers", None),
-    })
-    resp = api.search(cfg, args.query, args.backend, opts)
-    print(format_search(resp, full=args.full))
+    opts = {pname: getattr(args, pname, None) for pname in category_params(args.category)}
+    for k in ("count", "timeout", "full", "providers", "year", "author", "sort", "oa"):
+        v = getattr(args, k, None)
+        if v is not None:
+            opts[k] = v
+    resp = api.search_category(cfg, args.category, args.query, opts)
+    if args.category == "search.paper":
+        print(format_paper(resp, full=bool(args.full)))
+    elif args.category == "search.image":
+        print(format_image(resp, full=bool(args.full)))
+    elif args.category == "search.data":
+        print(format_data(resp, full=bool(args.full)))
+    else:
+        print(format_search(resp, full=bool(args.full)))
 
 
-# ── fetch ──────────────────────────────────────────────────
+# ── tags ─────────────────────────────────────────────────────
 
-def cmd_fetch(args: argparse.Namespace) -> None:
-    if args.list_providers:
-        print("providers: " + ", ".join(api.list_providers()))
-        return
-    if not args.url:
-        raise UsageError("缺少 url 参数（或使用 --list-providers）")
-    cfg = cfgmod.load_config()
-    result = api.fetch(cfg, args.url, {"timeout": args.timeout, "providers": args.providers})
-    print(result.content)
+def cmd_tags(args: argparse.Namespace) -> None:
+    print(format_tags(KNOWN_TAGS))
 
 
-# ── convert ────────────────────────────────────────────────
+# ── convert ──────────────────────────────────────────────────
 
 def cmd_convert(args: argparse.Namespace) -> None:
     if args.list_providers:
-        print("convert providers: " + ", ".join(api.list_convert_providers()))
+        print("convert.page (URL → Markdown): " + ", ".join(api.list_category_providers("convert.page")))
+        print("convert.file (文件 → Markdown): " + ", ".join(api.list_category_providers("convert.file")))
         return
-    if not args.file:
-        raise UsageError("缺少 file 参数（或使用 --list-providers）")
+    if not args.target:
+        raise UsageError("缺少 target 参数（URL 或本地文件路径；或使用 --list-providers）")
     cfg = cfgmod.load_config()
-    result = api.convert(cfg, args.file, {"timeout": args.timeout, "providers": args.providers})
+    result = api.convert(cfg, args.target,
+                         {"timeout": args.timeout, "providers": args.providers})
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(result.content)
@@ -158,37 +164,21 @@ def cmd_convert(args: argparse.Namespace) -> None:
         print(result.content)
 
 
-# ── tags ───────────────────────────────────────────────────
-
-def cmd_tags(args: argparse.Namespace) -> None:
-    print(format_tags(KNOWN_TAGS))
-
-
-# ── paper ──────────────────────────────────────────────────
-
-def cmd_paper(args: argparse.Namespace) -> None:
-    cfg = cfgmod.load_config()
-    opts = {
-        "backend": args.backend, "count": args.count, "timeout": args.timeout,
-        "year": args.year, "author": args.author, "sort": args.sort,
-        "oa": args.oa, "full": args.full,
-    }
-    resp = api.paper(cfg, args.query, opts)
-    print(format_paper(resp, full=args.full))
-
-
-# ── config ─────────────────────────────────────────────────
+# ── config ───────────────────────────────────────────────────
 
 def _flat_keys() -> list[str]:
-    """扁平化全部可设键；provider 子段（值为 dict）自动展开，无需硬编码名字。"""
+    """扁平化全部可设键；嵌套段（值为 dict）自动展开，无需硬编码名字。"""
     keys: list[str] = []
-    for sec, sub in cfgmod.DEFAULTS.items():
-        for k, v in sub.items():
+
+    def walk(prefix: str, node) -> None:
+        for k, v in node.items():
+            path = f"{prefix}.{k}" if prefix else k
             if isinstance(v, dict):
-                for pk in v:
-                    keys.append(f"{sec}.{k}.{pk}")
+                walk(path, v)
             else:
-                keys.append(f"{sec}.{k}")
+                keys.append(path)
+
+    walk("", cfgmod.DEFAULTS)
     return keys
 
 
@@ -197,12 +187,9 @@ def _check_key(key: str) -> None:
         raise UsageError(f"未知配置键: {key}（可用键见 eztool config show）")
 
 
-def cmd_config_path(args: argparse.Namespace) -> None:
-    print(cfgmod.config_path())
-
-
 def cmd_config_show(args: argparse.Namespace) -> None:
     cfg = cfgmod.load_config()
+    print(f"config file: {cfgmod.config_path()}")
     for key in _flat_keys():
         val = cfgmod.get_key(cfg, key)
         if val is None:
@@ -265,7 +252,10 @@ def cmd_config_clear(args: argparse.Namespace) -> None:
 
 def cmd_config_test(args: argparse.Namespace) -> None:
     cfg = cfgmod.load_config()
-    names = [args.backend] if args.backend else search_services()
+    if args.providers:
+        names = [n.strip() for n in args.providers.split(",") if n.strip()]
+    else:
+        names = service_names()
     failed = False
     for name in names:
         svc = create_service(name)
@@ -281,7 +271,7 @@ def cmd_config_test(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-# ── main ───────────────────────────────────────────────────
+# ── main ────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()

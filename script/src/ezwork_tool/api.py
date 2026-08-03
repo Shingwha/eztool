@@ -1,29 +1,31 @@
-"""公共入口：search / fetch / convert / paper + 服务商列表。
+"""公共入口：search_category（按类别路由搜索）/ convert（按输入类型路由转换）。
 
-统一配置（``providers.<name>`` 段）→ ProviderOpts → 统一回退链 / fan-out。
-search 的 ``auto`` 模式是真正的 failover：doubao 失败自动试 deepseek →
-anysearch；显式 ``--backend`` 只试该后端；逗号分隔的 ``--backend``
-（如 ``openalex,arxiv``）是多后端并行汇总（fan-out：同时搜、合并去重）。
-paper 默认并发搜 openalex + arxiv + crossref 三个论文源并合并去重。
+统一配置（``providers.<name>`` 段 + ``search.<类别>`` / ``convert.<类别>`` 段）
+→ ProviderOpts → 统一回退链 / fan-out。类别是路由单元：回退链候选来自
+registry.CATEGORIES，命令参数按类别归属——参数与后端错配从模型上消失。
+
+- search.paper：三源并行 fan-out（openalex+arxiv+crossref，合并去重）；
+- 其余 search.* 类别：回退链（第一个成功即返回，失败自动换下一个）；
+- convert：http(s):// → convert.page 链；本地路径 → convert.file 链。
 """
 
 from __future__ import annotations
 
+import os
 import sys
+from urllib.parse import urlparse
 
 from . import config as cfgmod
 from .base import FetchResult, ProviderOpts, SearchResponse, SearchResult
-from .chain import convert_chain, fetch_chain, run_chain, run_fanout
+from .chain import run_chain, run_fanout
 from .errors import (
     CATEGORY_ALL_FAILED,
-    CATEGORY_HTTP,
     ServiceError,
     UsageError,
 )
 from .registry import (
-    file_convert_services,
-    search_param_owners,
-    search_services,
+    SERVICES,
+    providers_for,
     service_names,
 )
 
@@ -31,19 +33,14 @@ from .registry import (
 from . import providers as _providers  # noqa: F401
 
 __all__ = [
-    "search", "fetch", "convert", "paper",
-    "list_providers", "list_convert_providers", "search_backend_names",
+    "search_category", "convert",
+    "list_providers", "list_category_providers",
 ]
 
-# auto 模式的 failover 顺序（免费/匿名可用优先，可被配置 search.providers 覆盖；
-# 与 config.DEFAULTS 同源，测试 monkeypatch 此名称即可）
-AUTO_SEARCH_ORDER = cfgmod.DEFAULTS["search"]["providers"]
-
-# paper 默认三源顺序（与 config.DEFAULTS 同源，测试可 monkeypatch）
-PAPER_ORDER = cfgmod.DEFAULTS["paper"]["providers"]
-
-# provider 段缺省超时（与 config.DEFAULTS 一致）；未配置段的 provider 回退段超时
-DEFAULT_TIMEOUTS = {"firecrawl": 60, "markdown": 30, "jina": 10, "mineru": 300}
+# provider 段缺省超时（未配置 providers.<name>.timeout 时回退）
+DEFAULT_TIMEOUTS = {
+    "firecrawl": 60, "markdown_new": 30, "jina_reader": 10, "mineru": 300,
+}
 
 
 # ── 配置 → ProviderOpts ────────────────────────────────────────────────────
@@ -52,7 +49,7 @@ DEFAULT_TIMEOUTS = {"firecrawl": 60, "markdown": 30, "jina": 10, "mineru": 300}
 def _provider_opts(cfg: dict, section: dict) -> ProviderOpts:
     """从 providers.<name> 段构建 ProviderOpts（timeouts + api_keys）。
 
-    timeout：provider 子段 > 段缺省（fetch/convert.timeout）> DEFAULT_TIMEOUTS。
+    timeout：provider 子段 > 类别段缺省（search.<cat>.timeout 等）> DEFAULT_TIMEOUTS。
     """
     timeouts: dict = {}
     api_keys: dict = {}
@@ -75,8 +72,20 @@ def _provider_opts(cfg: dict, section: dict) -> ProviderOpts:
     return ProviderOpts(timeouts=timeouts, api_keys=api_keys)
 
 
+def _section(cfg: dict, category: str) -> dict:
+    """取 ``<域>.<操作>`` 对应的配置段（search.web / convert.page …）。"""
+    domain, _, op = category.partition(".")
+    sec = cfg.get(domain) or {}
+    if not isinstance(sec, dict):
+        sec = {}
+    sub = sec.get(op)
+    if not isinstance(sub, dict):
+        sub = {}
+    return sub
+
+
 def _chain_providers(section: dict, opts: dict, defaults: list[str]) -> list[str]:
-    """回退链：opts.providers（逗号分隔）覆盖配置，再回退默认。"""
+    """回退链：opts.providers（逗号分隔）覆盖配置，再回退类别注册顺序。"""
     raw = opts.get("providers")
     if isinstance(raw, str):
         return [p.strip() for p in raw.split(",") if p.strip()]
@@ -93,12 +102,28 @@ def _log_collector(reasons: list[str]):
     return log
 
 
-# ── search ─────────────────────────────────────────────────────────────────
+def _check_provider_names(names: list[str]) -> None:
+    """未知 provider 名是用法错误（硬停），而不是静默 all-failed。"""
+    known = service_names()
+    for n in names:
+        if n not in known:
+            raise UsageError(
+                f"未知 provider '{n}'（可用: {', '.join(known)}）"
+            )
 
 
-def _check_params(names: list[str], opts: dict) -> None:
-    """传了不属于候选后端的特有参数 → UsageError（exit 2）。"""
-    owners = search_param_owners()
+def _param_owners(category: str) -> dict[str, str]:
+    """该类别 provider 特有参数 → 归属 provider（参数归属校验用）。"""
+    owners: dict[str, str] = {}
+    for name in providers_for(category):
+        for pname in (SERVICES[name].category_params or {}).get(category, {}):
+            owners[pname] = name
+    return owners
+
+
+def _check_params(names: list[str], category: str, opts: dict) -> None:
+    """传了不属于候选 provider 的特有参数 → UsageError（exit 2）。"""
+    owners = _param_owners(category)
     label = ",".join(names) if len(names) > 1 else names[0]
     for pname, val in opts.items():
         if not val:
@@ -106,56 +131,40 @@ def _check_params(names: list[str], opts: dict) -> None:
         owner = owners.get(pname)
         if owner and owner not in names:
             raise UsageError(
-                f"参数 --{pname.replace('_', '-')} 仅支持 {owner} 后端（当前: {label}）"
+                f"参数 --{pname.replace('_', '-')} 仅支持 {owner} provider（当前: {label}）"
             )
 
 
-def search(
-    cfg: dict,
-    query: str,
-    backend: str = "auto",
-    opts: dict | None = None,
-) -> SearchResponse:
-    """搜索。backend=auto → AUTO_SEARCH_ORDER 逐个 failover；显式 → 单后端；
-    逗号分隔（如 ``openalex,arxiv``）→ 多后端并行汇总（fan-out + 合并去重）。"""
-    opts = opts or {}
-    if backend == "auto":
-        # 顺序可配置：search.providers（配置）> opts.providers（CLI）> 默认
-        search_cfg = cfg.get("search") or {}
-        if not isinstance(search_cfg, dict):
-            search_cfg = {}
-        names = _chain_providers(search_cfg, opts, AUTO_SEARCH_ORDER)
-    elif "," in backend:
-        names = [b.strip() for b in backend.split(",") if b.strip()]
-        if not names:
-            raise UsageError(f"未知后端 '{backend}'（可用: auto, {', '.join(search_services())}）")
-        for b in names:
-            if b not in search_services():
-                known = ", ".join(search_services())
-                raise UsageError(f"未知后端 '{b}'（可用: auto, {known}）")
-    else:
-        names = [backend]
-        if backend not in search_services():
-            known = ", ".join(search_services())
-            raise UsageError(f"未知后端 '{backend}'（可用: auto, {known}）")
-    _check_params(names, opts)
+# ── search ─────────────────────────────────────────────────────────────────
 
-    if "," in backend:
-        resp = _search_fanout(cfg, names, query, opts)
-        resp.metadata = resp.metadata or {}
-        resp.metadata["backend"] = ",".join(names)
-        return resp
+
+def search_category(
+    cfg: dict, category: str, query: str, opts: dict | None = None,
+) -> SearchResponse:
+    """按类别路由搜索。category 决定回退链与参数面（providers_for 校验类别）。"""
+    providers_for(category)  # 未知类别 → ServiceError(CATEGORY_INVALID)
+    opts = dict(opts or {})
+    if category == "search.paper":
+        return _paper(cfg, query, opts)
+
+    section = _section(cfg, category)
+    popts = _provider_opts(cfg, section)
+    names = _chain_providers(section, opts, providers_for(category))
+    _check_provider_names(names)
+    _check_params(names, category, opts)
+    if category == "search.image":
+        opts["image"] = True  # doubao 图片模式开关（provider 方法零改动）
 
     reasons: list[str] = []
     result = run_chain(
-        names, "search",
+        names, category,
         lambda svc: svc.search(cfg, query, opts),
-        log=_log_collector(reasons),
+        popts, log=_log_collector(reasons),
     )
     if result is None:
-        detail = "; ".join(reasons) or f"backends={names}"
+        detail = "; ".join(reasons) or f"providers={names}"
         raise ServiceError(
-            f"all backends failed: {detail}", CATEGORY_ALL_FAILED,
+            f"all providers failed: {detail}", CATEGORY_ALL_FAILED,
             code="search_failed",
         )
     resp, name = result
@@ -163,6 +172,38 @@ def search(
         resp.metadata = {}
     resp.metadata.setdefault("backend", name)
     return resp
+
+
+def _paper(cfg: dict, query: str, opts: dict) -> SearchResponse:
+    """论文搜索：默认并发搜 openalex + arxiv + crossref，合并去重。
+
+    opts 键：providers（逗号分隔，覆盖 search.paper.providers 配置）、count、
+    timeout、year、author、sort（relevance/cited/date）、oa、full。
+    """
+    section = _section(cfg, "search.paper")
+    popts = _provider_opts(cfg, section)
+    names = _chain_providers(section, opts, providers_for("search.paper"))
+    _check_provider_names(names)
+    return _search_fanout(cfg, names, query, opts, popts)
+
+
+def _search_fanout(
+    cfg: dict, names: list[str], query: str, opts: dict, popts: ProviderOpts,
+) -> SearchResponse:
+    """fan-out 搜索：并行搜全部 names，合并去重；全部失败抛错。"""
+    reasons: list[str] = []
+    paired = run_fanout(
+        names, "search.paper",
+        lambda svc: svc.search(cfg, query, opts),
+        popts, log=_log_collector(reasons),
+    )
+    if not paired:
+        detail = "; ".join(reasons) or f"providers={names}"
+        raise ServiceError(
+            f"all providers failed: {detail}", CATEGORY_ALL_FAILED,
+            code="search_failed",
+        )
+    return _merge_search(paired, sort=opts.get("sort"))
 
 
 def _merge_search(paired: list[tuple[str, SearchResponse]], sort: str | None = None) -> SearchResponse:
@@ -219,100 +260,42 @@ def _merge_search(paired: list[tuple[str, SearchResponse]], sort: str | None = N
     )
 
 
-def _search_fanout(cfg: dict, names: list[str], query: str, opts: dict) -> SearchResponse:
-    """fan-out 搜索入口：并行搜全部 names，合并去重；全部失败抛错。"""
-    reasons: list[str] = []
-    paired = run_fanout(
-        names, "search",
-        lambda svc: svc.search(cfg, query, opts),
-        log=_log_collector(reasons),
-    )
-    if not paired:
-        detail = "; ".join(reasons) or f"backends={names}"
-        raise ServiceError(
-            f"all backends failed: {detail}", CATEGORY_ALL_FAILED,
-            code="search_failed",
-        )
-    return _merge_search(paired, sort=opts.get("sort"))
+# ── convert ────────────────────────────────────────────────────────────────
 
 
-def paper(cfg: dict, query: str, opts: dict | None = None) -> SearchResponse:
-    """论文搜索：默认并发搜 openalex + arxiv + crossref，合并去重。
-
-    opts 键：backend（"auto"=用 paper.providers 配置；逗号分隔=多源并行汇总；
-    单个=只用该源）、count、timeout、year、author、sort（relevance/cited/date）、
-    oa、full（透传 formatter 用）。opts.providers 保留程序化兼容（等价 backend）。
-    """
-    opts = opts or {}
-    paper_cfg = cfg.get("paper") or {}
-    if not isinstance(paper_cfg, dict):
-        paper_cfg = {}
-    backend = opts.get("backend") or "auto"
-    if backend == "auto":
-        names = _chain_providers(paper_cfg, opts, PAPER_ORDER)
-    else:
-        names = [b.strip() for b in str(backend).split(",") if b.strip()]
-        if not names:
-            names = list(PAPER_ORDER)
-    for b in names:
-        if b not in search_services():
-            known = ", ".join(search_services())
-            raise UsageError(f"未知后端 '{b}'（可用: auto, {known}）")
-    return _search_fanout(cfg, names, query, opts)
-
-
-# ── fetch / convert ────────────────────────────────────────────────────────
-
-
-def fetch(cfg: dict, url: str, opts: dict | None = None) -> FetchResult:
-    """按回退链抓取 URL 转 Markdown。
+def convert(cfg: dict, target: str, opts: dict | None = None) -> FetchResult:
+    """按输入类型路由转换：URL → convert.page 链；本地路径 → convert.file 链。
 
     opts 只取 timeout（int|None）与 providers（逗号分隔字符串，覆盖配置链）。
-    全部 provider 失败抛 ServiceError(code="fetch_failed")。
+    本地路径不存在 → UsageError（提示路径错误）。全部 provider 失败抛
+    ServiceError(code="convert_failed")。
     """
     opts = opts or {}
-    fetch_cfg = cfg.get("fetch") or {}
-    if not isinstance(fetch_cfg, dict):
-        fetch_cfg = {}
+    if urlparse(target).scheme in ("http", "https"):
+        category = "convert.page"
+        invoke = lambda svc: svc.fetch(target, timeout=svc.timeout(30))  # noqa: E731
+    else:
+        if not os.path.exists(target):
+            raise UsageError(f"文件不存在: {target}")
+        category = "convert.file"
+        invoke = lambda svc: svc.convert_file(target, timeout=svc.timeout(60))  # noqa: E731
 
-    popts = _provider_opts(cfg, fetch_cfg)
-    providers = _chain_providers(fetch_cfg, opts, cfgmod.DEFAULTS["fetch"]["providers"])
+    section = _section(cfg, category)
+    popts = _provider_opts(cfg, section)
+    names = _chain_providers(section, opts, providers_for(category))
+    _check_provider_names(names)
+
     reasons: list[str] = []
-    result = fetch_chain(url, providers, popts, log=_log_collector(reasons))
-
+    result = run_chain(
+        names, category, invoke, popts, log=_log_collector(reasons),
+    )
     if result is None:
-        detail = "; ".join(reasons) or f"providers={providers}"
-        raise ServiceError(
-            f"all providers failed: {detail}", CATEGORY_ALL_FAILED,
-            code="fetch_failed",
-        )
-    return result
-
-
-def convert(cfg: dict, path: str, opts: dict | None = None) -> FetchResult:
-    """按回退链把本地文件转 Markdown（上传到支持文件转换的服务）。
-
-    文件存在性 / 大小 / 扩展名校验在各 provider 内做（失败为 CATEGORY_INVALID，
-    不浪费请求）。不支持文件转换的 provider 会被链自动跳过。
-    全部失败抛 ServiceError(code="convert_failed")。
-    """
-    opts = opts or {}
-    conv_cfg = cfg.get("convert") or {}
-    if not isinstance(conv_cfg, dict):
-        conv_cfg = {}
-
-    popts = _provider_opts(cfg, conv_cfg)
-    providers = _chain_providers(conv_cfg, opts, cfgmod.DEFAULTS["convert"]["providers"])
-    reasons: list[str] = []
-    result = convert_chain(path, providers, popts, log=_log_collector(reasons))
-
-    if result is None:
-        detail = "; ".join(reasons) or f"providers={providers}"
+        detail = "; ".join(reasons) or f"providers={names}"
         raise ServiceError(
             f"all providers failed: {detail}", CATEGORY_ALL_FAILED,
             code="convert_failed",
         )
-    return result
+    return result[0]
 
 
 # ── 列表 ───────────────────────────────────────────────────────────────────
@@ -322,10 +305,6 @@ def list_providers() -> list[str]:
     return service_names()
 
 
-def list_convert_providers() -> list[str]:
-    return file_convert_services()
-
-
-def search_backend_names() -> list[str]:
-    """search 可用后端（不含 auto）。"""
-    return search_services()
+def list_category_providers(category: str) -> list[str]:
+    """指定类别（convert.page / convert.file）的 provider 候选。"""
+    return providers_for(category)

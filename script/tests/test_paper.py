@@ -1,4 +1,4 @@
-"""多 provider 汇总搜索（fan-out）测试：run_fanout / 合并去重 / paper 入口 / search 逗号后端。"""
+"""search paper（三源并行 fan-out）与合并去重测试：run_fanout / _merge_search / paper 入口。"""
 
 import unittest
 from unittest import mock
@@ -7,16 +7,17 @@ from ezwork_tool import api
 from ezwork_tool.base import Provider, SearchResponse, SearchResult
 from ezwork_tool.chain import run_fanout
 from ezwork_tool.errors import ServiceError, UsageError
-from ezwork_tool.registry import SERVICES
+from ezwork_tool.registry import CATEGORIES, SERVICES
 
 CATEGORY_ALL_FAILED = "all_failed"
+PAPER_CATEGORY = "search.paper"
 
 
 class _FakeProvider(Provider):
     """可配置行为的假搜索服务商（类级属性，create_service 新建实例仍生效）。"""
 
     name = ""
-    capabilities = frozenset({"search"})
+    categories = frozenset()
     fail_with = None
     results = []
 
@@ -38,7 +39,8 @@ def _make(name, **attrs):
 
 def _register(*names):
     for n in names:
-        SERVICES[n] = _make(n, results=[SearchResult(title=f"t-{n}", url=f"u-{n}")])
+        SERVICES[n] = _make(n, categories=frozenset({PAPER_CATEGORY}),
+                            results=[SearchResult(title=f"t-{n}", url=f"u-{n}")])
 
 
 def _unregister(*names):
@@ -60,39 +62,41 @@ def _res(title="t", url="u", doi=None, citations=None, year=None):
 class TestRunFanout(unittest.TestCase):
     def setUp(self):
         _register("aaa", "bbb", "ccc")
-        SERVICES["fail"] = _make("fail", fail_with=ServiceError("boom", "http"))
+        SERVICES["fail"] = _make("fail", categories=frozenset({PAPER_CATEGORY}),
+                                 fail_with=ServiceError("boom", "http"))
 
     def tearDown(self):
         _unregister("aaa", "bbb", "ccc", "fail")
 
     def test_all_success_order_preserved(self):
         logs = []
-        out = run_fanout(["ccc", "aaa"], "search",
+        out = run_fanout(["ccc", "aaa"], PAPER_CATEGORY,
                          lambda svc: svc.search({}, "q", {}), log=logs.append)
         self.assertEqual([n for n, _ in out], ["ccc", "aaa"])
 
     def test_partial_failure_keeps_successes(self):
         logs = []
-        out = run_fanout(["fail", "aaa"], "search",
+        out = run_fanout(["fail", "aaa"], PAPER_CATEGORY,
                          lambda svc: svc.search({}, "q", {}), log=logs.append)
         self.assertEqual([n for n, _ in out], ["aaa"])
         self.assertTrue(any("failed" in m for m in logs))
 
     def test_all_fail_returns_empty(self):
-        out = run_fanout(["fail"], "search",
+        out = run_fanout(["fail"], PAPER_CATEGORY,
                          lambda svc: svc.search({}, "q", {}), log=lambda m: None)
         self.assertEqual(out, [])
 
     def test_unknown_provider_logged_and_skipped(self):
         logs = []
-        out = run_fanout(["nope", "aaa"], "search",
+        out = run_fanout(["nope", "aaa"], PAPER_CATEGORY,
                          lambda svc: svc.search({}, "q", {}), log=logs.append)
         self.assertEqual([n for n, _ in out], ["aaa"])
 
-    def test_no_capability_skipped(self):
-        SERVICES["nofetch"] = _make("nofetch", capabilities=frozenset({"fetch"}))
+    def test_wrong_category_skipped(self):
+        # 只支持 convert.page 的 provider 在 paper fan-out 中被跳过
+        SERVICES["nofetch"] = _make("nofetch", categories=frozenset({"convert.page"}))
         try:
-            out = run_fanout(["nofetch"], "search",
+            out = run_fanout(["nofetch"], PAPER_CATEGORY,
                              lambda svc: svc.search({}, "q", {}), log=lambda m: None)
             self.assertEqual(out, [])
         finally:
@@ -175,99 +179,50 @@ class TestMergeSearch(unittest.TestCase):
         self.assertEqual([r.title for r in resp.results], ["b1", "b2", "a1"])
 
 
-class TestSearchCommaBackend(unittest.TestCase):
-    def setUp(self):
-        _register("aaa", "bbb")
-
-    def tearDown(self):
-        _unregister("aaa", "bbb")
-
-    def test_comma_backend_fanout_merged(self):
-        resp = api.search({}, "q", "aaa,bbb")
-        self.assertEqual(len(resp.results), 2)
-        self.assertEqual(resp.metadata["backend"], "aaa,bbb")
-        self.assertEqual({r.source for r in resp.results}, {"aaa", "bbb"})
-
-    def test_single_and_auto_unchanged(self):
-        resp = api.search({}, "q", "aaa")
-        self.assertEqual(resp.metadata["backend"], "aaa")
-        old = api.AUTO_SEARCH_ORDER
-        api.AUTO_SEARCH_ORDER = ["bbb"]
-        try:
-            resp = api.search({}, "q", "auto")
-            self.assertEqual(resp.metadata["backend"], "bbb")
-        finally:
-            api.AUTO_SEARCH_ORDER = old
-
-    def test_unknown_backend_usage_error(self):
-        with self.assertRaises(UsageError):
-            api.search({}, "q", "aaa,nope")
-
-    def test_all_fail_raises_service_error(self):
-        _unregister("bbb")
-        SERVICES["zzz"] = _make("zzz", fail_with=ServiceError("boom", "http"))
-        try:
-            with self.assertRaises(ServiceError) as ctx:
-                api.search({}, "q", "zzz")
-            self.assertEqual(ctx.exception.category, CATEGORY_ALL_FAILED)
-        finally:
-            _unregister("zzz")
-
-    def test_param_owner_check_accepts_owner_in_list(self):
-        # --tag 归 anysearch；候选含 anysearch 时应通过
-        _register("anysearch")
-        try:
-            api.search({}, "q", "aaa,anysearch", {"tag": "academic.search"})
-        finally:
-            _unregister("anysearch")
-
-
 class TestPaperEntry(unittest.TestCase):
+    """search_category(cfg, "search.paper", q, opts)：三源并行汇总 + 去重。"""
+
     def setUp(self):
         _register("openalex", "arxiv", "crossref")
-        self._old_order = api.PAPER_ORDER
-        api.PAPER_ORDER = ["openalex", "arxiv", "crossref"]
+        self._orig = list(CATEGORIES.get(PAPER_CATEGORY, []))
+        CATEGORIES[PAPER_CATEGORY] = ["openalex", "arxiv", "crossref"]
 
     def tearDown(self):
-        api.PAPER_ORDER = self._old_order
+        CATEGORIES[PAPER_CATEGORY] = self._orig
         _unregister("openalex", "arxiv", "crossref")
 
     def test_default_order_all_merged(self):
-        resp = api.paper({}, "q")
+        resp = api.search_category({}, PAPER_CATEGORY, "q")
         self.assertEqual(resp.metadata["backend"], "openalex,arxiv,crossref")
         self.assertEqual(len(resp.results), 3)
 
-    def test_backend_list_override(self):
-        resp = api.paper({}, "q", {"backend": "arxiv,openalex"})
+    def test_providers_override(self):
+        resp = api.search_category({}, PAPER_CATEGORY, "q", {"providers": "arxiv,openalex"})
         self.assertEqual(resp.metadata["backend"], "arxiv,openalex")
         self.assertEqual([r.source for r in resp.results], ["arxiv", "openalex"])
 
-    def test_backend_single_source(self):
-        resp = api.paper({}, "q", {"backend": "crossref"})
+    def test_providers_single_source(self):
+        resp = api.search_category({}, PAPER_CATEGORY, "q", {"providers": "crossref"})
         self.assertEqual(resp.metadata["backend"], "crossref")
         self.assertEqual([r.source for r in resp.results], ["crossref"])
 
     def test_config_section_order(self):
-        cfg = {"paper": {"providers": ["crossref"]}}
-        resp = api.paper(cfg, "q")
+        cfg = {"search": {"paper": {"providers": ["crossref"]}}}
+        resp = api.search_category(cfg, PAPER_CATEGORY, "q")
         self.assertEqual(resp.metadata["backend"], "crossref")
 
-    def test_providers_key_backward_compat(self):
-        # 程序化调用仍可用 providers 键（等价 backend 逗号列表）
-        resp = api.paper({}, "q", {"providers": "arxiv,openalex"})
-        self.assertEqual(resp.metadata["backend"], "arxiv,openalex")
-
-    def test_unknown_backend_usage_error(self):
+    def test_unknown_provider_usage_error(self):
         with self.assertRaises(UsageError):
-            api.paper({}, "q", {"backend": "openalex,nope"})
+            api.search_category({}, PAPER_CATEGORY, "q", {"providers": "openalex,nope"})
 
     def test_all_fail_raises_service_error(self):
         for n in ("openalex", "arxiv", "crossref"):
             SERVICES[n].fail_with = ServiceError("boom", "http")
         try:
             with self.assertRaises(ServiceError) as ctx:
-                api.paper({}, "q")
+                api.search_category({}, PAPER_CATEGORY, "q")
             self.assertEqual(ctx.exception.category, CATEGORY_ALL_FAILED)
+            self.assertEqual(ctx.exception.code, "search_failed")
         finally:
             for n in ("openalex", "arxiv", "crossref"):
                 SERVICES[n].fail_with = None
@@ -278,9 +233,24 @@ class TestPaperEntry(unittest.TestCase):
         SERVICES["openalex"].results = [_res(title="same", doi="10.1/x")]
         SERVICES["arxiv"].results = [_res(title="preprint", url="http://arxiv.org/abs/1")]
         SERVICES["crossref"].results = [_res(title="same", doi="10.1/X")]
-        resp = api.paper({}, "q")
+        resp = api.search_category({}, PAPER_CATEGORY, "q")
         self.assertEqual(len(resp.results), 2)
         self.assertEqual(resp.results[0].source, "openalex")  # first wins
+
+    def test_sort_and_year_passed_through(self):
+        # --sort/--year 是命令专属参数，原样透传给每个 provider
+        seen = {}
+
+        def spy(cfg, query, opts):
+            seen["sort"] = opts.get("sort")
+            seen["year"] = opts.get("year")
+            return SearchResponse(query=query, results=[], metadata={})
+
+        for n in ("openalex", "arxiv", "crossref"):
+            SERVICES[n].search = staticmethod(spy)
+        api.search_category({}, PAPER_CATEGORY, "q",
+                            {"sort": "cited", "year": "2023", "oa": True})
+        self.assertEqual(seen, {"sort": "cited", "year": "2023"})
 
 
 if __name__ == "__main__":

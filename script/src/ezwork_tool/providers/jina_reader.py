@@ -15,8 +15,8 @@ from ..registry import register
 
 @register
 class JinaReaderProvider(Provider):
-    name = "jina"
-    capabilities = frozenset({"fetch"})
+    name = "jina_reader"
+    categories = frozenset({"convert.page"})
     base_url = "https://r.jina.ai/"
 
     def build_headers(self) -> dict:

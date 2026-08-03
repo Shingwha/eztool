@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
+from ..base import Provider, SearchResponse, SearchResult
 from ..errors import (
     CATEGORY_HTTP,
     CATEGORY_NETWORK,
@@ -227,7 +227,7 @@ class CrossrefProvider(Provider):
     """crossref 论文搜索后端（免凭证；作者/年份/OA 过滤 + 引用/日期排序）。"""
 
     name = "crossref"
-    capabilities = frozenset({"search"})
+    categories = frozenset({"search.paper"})
 
     def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
         return _search(cfg, query, opts)

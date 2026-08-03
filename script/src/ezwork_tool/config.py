@@ -1,7 +1,9 @@
 """eztool 统一配置：~/.config/ezwork-tool/config.json。
 
-一段式结构：所有服务商凭证/超时统一放 ``providers.<name>`` 段，
-``search/fetch/convert`` 段只保留公共设置（超时、回退链顺序）。
+两层结构：``providers.<name>`` 段放各服务商凭证/超时；``search.<类别>`` /
+``convert.<类别>`` 段（search.web / search.image / search.paper /
+search.data / convert.page / convert.file）放类别回退链与缺省超时。
+类别段 ``providers`` 缺省 = 该类别的注册顺序（registry），显式配置则覆盖。
 """
 
 from __future__ import annotations
@@ -26,26 +28,32 @@ DEFAULTS: dict[str, Any] = {
         "deepseek": {"api_key": None, "model": "deepseek-v4-flash",
                      "thinking": "enabled", "max_tokens": 32768},
         "firecrawl": {"api_key": None, "timeout": 60},
-        "markdown": {"timeout": 30},
-        "jina": {"api_key": None, "timeout": 10},
+        "markdown_new": {"timeout": 30},
+        "jina_reader": {"api_key": None, "timeout": 10},
         "mineru": {"api_key": None, "timeout": 300},
         "pdfinspector": {"timeout": 60},
         "openalex": {"mailto": None, "timeout": 30},
         "arxiv": {"timeout": 30},
         "crossref": {"timeout": 30},
     },
-    # 回退链默认顺序：免费/匿名可用的服务在前，需 API Key 的在后
-    "search": {"providers": ["anysearch", "doubao", "deepseek"], "timeout": 30},
-    "fetch": {"providers": ["markdown", "jina", "firecrawl"], "timeout": 30},
-    # convert：本地解析（pdfinspector）优先，失败/扫描件降级云端
-    "convert": {"providers": ["pdfinspector", "markdown", "mineru"], "timeout": 60},
-    "paper": {"providers": ["openalex", "arxiv", "crossref"], "timeout": 30},
+    # 搜索类别段：回退链默认顺序（与 registry 注册顺序同源，可显式覆盖）
+    "search": {
+        "web": {"providers": ["doubao", "anysearch", "deepseek"], "timeout": 30},
+        "image": {"providers": ["doubao"], "timeout": 30},
+        "paper": {"providers": ["openalex", "arxiv", "crossref"], "timeout": 30},
+        "data": {"providers": ["anysearch"], "timeout": 30},
+    },
+    # 转换类别段：page=URL 抓取（免费优先），file=本地文件（本地解析优先）
+    "convert": {
+        "page": {"providers": ["markdown_new", "jina_reader", "firecrawl"], "timeout": 30},
+        "file": {"providers": ["pdfinspector", "markdown_new", "mineru"], "timeout": 60},
+    },
 }
 
 SECRET_KEYS = frozenset({
     "providers.doubao.api_key", "providers.doubao.ak", "providers.doubao.sk",
     "providers.anysearch.api_key", "providers.deepseek.api_key",
-    "providers.firecrawl.api_key", "providers.jina.api_key",
+    "providers.firecrawl.api_key", "providers.jina_reader.api_key",
     "providers.mineru.api_key",
 })
 
@@ -71,23 +79,28 @@ KEY_HINTS = {
     "providers.deepseek.max_tokens": "最大输出 token 数",
     "providers.firecrawl.api_key": "Firecrawl API Key（可选）",
     "providers.firecrawl.timeout": "firecrawl 超时秒数",
-    "providers.markdown.timeout": "markdown.new 超时秒数",
-    "providers.jina.api_key": "Jina API Key（可选）",
-    "providers.jina.timeout": "jina 超时秒数",
+    "providers.markdown_new.timeout": "markdown.new 超时秒数",
+    "providers.jina_reader.api_key": "Jina API Key（可选）",
+    "providers.jina_reader.timeout": "jina 超时秒数",
     "providers.mineru.api_key": "MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML）；不配走 v1 轻量 API（≤10MB/20页）",
     "providers.mineru.timeout": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）",
     "providers.openalex.mailto": "OpenAlex 礼貌池邮箱（推荐填写，提升限流配额）",
     "providers.openalex.timeout": "openalex 请求超时秒数",
     "providers.arxiv.timeout": "arxiv 请求超时秒数",
     "providers.crossref.timeout": "crossref 请求超时秒数",
-    "search.providers": "搜索回退链，逗号分隔（免费优先）：anysearch,doubao,deepseek",
-    "search.timeout": "搜索默认超时秒数",
-    "fetch.providers": "抓取回退链，逗号分隔（免费优先）：markdown,jina,firecrawl",
-    "fetch.timeout": "抓取默认超时秒数",
-    "convert.providers": "文件转 Markdown 回退链，逗号分隔：markdown,mineru",
-    "convert.timeout": "文件转换默认超时秒数",
-    "paper.providers": "论文搜索源列表，逗号分隔（默认 openalex,arxiv,crossref）",
-    "paper.timeout": "论文搜索默认超时秒数",
+    "providers.pdfinspector.timeout": "pdfinspector 本地解析超时秒数",
+    "search.web.providers": "网页搜索回退链，逗号分隔：doubao,anysearch,deepseek",
+    "search.web.timeout": "网页搜索默认超时秒数",
+    "search.image.providers": "图片搜索回退链，逗号分隔：doubao",
+    "search.image.timeout": "图片搜索默认超时秒数",
+    "search.paper.providers": "论文搜索源列表，逗号分隔（默认 openalex,arxiv,crossref）",
+    "search.paper.timeout": "论文搜索默认超时秒数",
+    "search.data.providers": "专业数据源回退链，逗号分隔：anysearch",
+    "search.data.timeout": "专业数据源搜索默认超时秒数",
+    "convert.page.providers": "URL → Markdown 抓取链，逗号分隔（免费优先）：markdown_new,jina_reader,firecrawl",
+    "convert.page.timeout": "URL 抓取默认超时秒数",
+    "convert.file.providers": "文件 → Markdown 转换链，逗号分隔（本地解析优先）：pdfinspector,markdown_new,mineru",
+    "convert.file.timeout": "文件转换默认超时秒数",
 }
 
 def config_dir() -> str:

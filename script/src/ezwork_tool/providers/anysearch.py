@@ -313,13 +313,11 @@ class AnySearchProvider(Provider):
     """anysearch 搜索后端（匿名可用；tag 定向数据源）。"""
 
     name = "anysearch"
-    capabilities = frozenset({"search"})
-    search_params = {
-        "tag": ParamSpec(metavar="TAG", help="[anysearch] 数据源标签（见 eztool tags）"),
-        "zone": ParamSpec(choices=("cn", "intl"), help="[anysearch] 区域"),
-        "language": ParamSpec(help="[anysearch] 语言，如 zh-CN"),
-        "params": ParamSpec(help="[anysearch] 额外参数 JSON"),
-        "anonymous": ParamSpec(action="store_true", help="[anysearch] 强制匿名模式"),
+    categories = frozenset({"search.web", "search.data"})
+    category_params = {
+        "search.data": {
+            "tag": ParamSpec(metavar="TAG", help="数据源标签（见 eztool search tags）"),
+        },
     }
 
     def has_credentials(self, cfg: dict) -> bool:

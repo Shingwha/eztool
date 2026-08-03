@@ -43,8 +43,8 @@ _INVALID_CODES = {"UNSUPPORTED_FORMAT", "FILE_TOO_LARGE", "INVALID_FILE"}
 
 @register
 class MarkdownNewProvider(Provider):
-    name = "markdown"
-    capabilities = frozenset({"fetch", "convert_file"})
+    name = "markdown_new"
+    categories = frozenset({"convert.page", "convert.file"})
     base_url = "https://markdown.new/"
 
     # Note: markdown.new treats the whole request path+query as the target

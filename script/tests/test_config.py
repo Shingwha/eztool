@@ -46,10 +46,25 @@ class TestLoadConfig(unittest.TestCase):
     def test_defaults_when_no_file(self):
         cfg = self._load_in()
         self.assertEqual(cfg["providers"]["anysearch"]["max_results"], 10)
-        self.assertEqual(cfg["search"]["providers"], ["anysearch", "doubao", "deepseek"])
-        self.assertEqual(cfg["fetch"]["providers"], ["markdown", "jina", "firecrawl"])
+        self.assertEqual(cfg["search"]["web"]["providers"],
+                         ["doubao", "anysearch", "deepseek"])
+        self.assertEqual(cfg["search"]["image"]["providers"], ["doubao"])
+        self.assertEqual(cfg["search"]["paper"]["providers"],
+                         ["openalex", "arxiv", "crossref"])
+        self.assertEqual(cfg["search"]["data"]["providers"], ["anysearch"])
+        self.assertEqual(cfg["convert"]["page"]["providers"],
+                         ["markdown_new", "jina_reader", "firecrawl"])
+        self.assertEqual(cfg["convert"]["file"]["providers"],
+                         ["pdfinspector", "markdown_new", "mineru"])
         self.assertEqual(cfg["providers"]["deepseek"]["thinking"], "enabled")
         self.assertEqual(cfg["providers"]["mineru"]["timeout"], 300)
+        self.assertEqual(cfg["providers"]["markdown_new"]["timeout"], 30)
+
+    def test_category_section_override(self):
+        cfg = self._load_in('{"search": {"web": {"providers": ["deepseek"]}}}')
+        self.assertEqual(cfg["search"]["web"]["providers"], ["deepseek"])
+        # 未覆盖的类别段保持默认
+        self.assertEqual(cfg["search"]["image"]["providers"], ["doubao"])
 
     def test_corrupt_file_falls_back(self):
         cfg = self._load_in("{not json")
@@ -63,8 +78,8 @@ class TestParseValue(unittest.TestCase):
         self.assertIs(cfgmod.parse_value("providers.doubao.need_url", "false"), False)
         self.assertEqual(cfgmod.parse_value("providers.doubao.industry", "finance"), "finance")
         self.assertEqual(
-            cfgmod.parse_value("fetch.providers", "jina, firecrawl"),
-            ["jina", "firecrawl"],
+            cfgmod.parse_value("convert.page.providers", "jina_reader, firecrawl"),
+            ["jina_reader", "firecrawl"],
         )
 
 

@@ -13,7 +13,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
+from ..base import Provider, SearchResponse, SearchResult
 from ..errors import (
     CATEGORY_HTTP,
     CATEGORY_NETWORK,
@@ -173,7 +173,7 @@ class ArxivProvider(Provider):
     """arxiv 预印本搜索后端（免凭证；支持作者/年份/日期排序）。"""
 
     name = "arxiv"
-    capabilities = frozenset({"search"})
+    categories = frozenset({"search.paper"})
 
     def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
         return _search(cfg, query, opts)

@@ -25,7 +25,7 @@ API_URL = "https://api.firecrawl.dev/v2/scrape"
 @register
 class FirecrawlProvider(Provider):
     name = "firecrawl"
-    capabilities = frozenset({"fetch"})
+    categories = frozenset({"convert.page"})
 
     def build_headers(self) -> dict:
         headers = {"Content-Type": "application/json"}

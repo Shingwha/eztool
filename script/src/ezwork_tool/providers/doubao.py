@@ -407,25 +407,16 @@ class DoubaoProvider(Provider):
     """doubao 搜索后端（实现见上 *_search/_has_credentials/_test_credentials）。"""
 
     name = "doubao"
-    capabilities = frozenset({"search"})
-    search_params = {
-        "image": ParamSpec(action="store_true", help="[doubao] 图片搜索"),
-        "sites": ParamSpec(help="[doubao] 限定域名，| 分隔"),
-        "block_hosts": ParamSpec(help="[doubao] 排除域名，| 分隔"),
-        "time_range": ParamSpec(
-            help="[doubao] OneDay/OneWeek/OneMonth/OneYear 或 YYYY-MM-DD..YYYY-MM-DD"
-        ),
-        "need_content": ParamSpec(action="store_true", help="[doubao] 只返回带正文的结果"),
-        "need_url": ParamSpec(action="store_true", help="[doubao] 只返回带落地链接的结果"),
-        "content_formats": ParamSpec(choices=("text", "markdown"), help="[doubao] 正文格式"),
-        "industry": ParamSpec(choices=("finance", "game", "gov"), help="[doubao] 行业搜索"),
-        "query_rewrite": ParamSpec(action="store_true", help="[doubao] 查询改写（更慢）"),
-        "auth_info_level": ParamSpec(type=int, choices=(0, 1), help="[doubao] 1=仅高权威来源"),
-        "width_min": ParamSpec(type=int, help="[doubao image] 最小宽度"),
-        "width_max": ParamSpec(type=int, help="[doubao image] 最大宽度"),
-        "height_min": ParamSpec(type=int, help="[doubao image] 最小高度"),
-        "height_max": ParamSpec(type=int, help="[doubao image] 最大高度"),
-        "shapes": ParamSpec(choices=("横长方形", "竖长方形", "方形"), help="[doubao image] 图片形状"),
+    categories = frozenset({"search.web", "search.image"})
+    # 图片搜索由 search image 子命令路由（api 注入 image=True），参数面只留图片专属
+    category_params = {
+        "search.image": {
+            "width_min": ParamSpec(type=int, help="最小宽度"),
+            "width_max": ParamSpec(type=int, help="最大宽度"),
+            "height_min": ParamSpec(type=int, help="最小高度"),
+            "height_max": ParamSpec(type=int, help="最大高度"),
+            "shapes": ParamSpec(choices=("横长方形", "竖长方形", "方形"), help="图片形状"),
+        },
     }
 
     def has_credentials(self, cfg: dict) -> bool:

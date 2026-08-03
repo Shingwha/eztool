@@ -35,7 +35,7 @@ def _size(result) -> str:
 
 def run_chain(
     names: list[str],
-    capability: str,
+    category: str,
     invoke: Callable,
     opts: ProviderOpts | None = None,
     log: LogFn = _stderr,
@@ -51,8 +51,8 @@ def run_chain(
             log(f"[{name}] failed: {e}")
             return None
 
-        if capability not in svc.capabilities:
-            log(f"[{name}] skipped: no '{capability}' capability")
+        if category not in svc.categories:
+            log(f"[{name}] skipped: no '{category}'")
             continue
 
         t0 = time.monotonic()
@@ -73,14 +73,14 @@ def run_chain(
 
 def run_fanout(
     names: list[str],
-    capability: str,
+    category: str,
     invoke: Callable,
     opts: ProviderOpts | None = None,
     log: LogFn = _stderr,
 ) -> list[tuple[str, Any]]:
     """并行执行所有 provider（fan-out），互不中断、不失败回退。
 
-    与 run_chain 语义相同（create_service 失败 / 无 capability / ServiceError
+    与 run_chain 语义相同（create_service 失败 / 无该类别 / ServiceError
     都只 log 后继续），但**不中断**：每个 name 各自 try，成败互不影响。
     返回成功结果列表，**保持 names 传入顺序**（``ex.map`` 天然保序）：
     ``[(name, result), ...]``；全部失败返回空列表。
@@ -92,8 +92,8 @@ def run_fanout(
             log(f"[{name}] failed: {e}")
             return None
 
-        if capability not in svc.capabilities:
-            log(f"[{name}] skipped: no '{capability}' capability")
+        if category not in svc.categories:
+            log(f"[{name}] skipped: no '{category}'")
             return None
 
         t0 = time.monotonic()
@@ -119,12 +119,12 @@ def fetch_chain(
     opts: ProviderOpts,
     log: LogFn = _stderr,
 ) -> Optional[FetchResult]:
-    """URL → Markdown 链（firecrawl → markdown.new → jina by default）。
+    """URL → Markdown 链（convert.page：markdown_new → jina_reader → firecrawl）。
 
     返回 FetchResult 或 None（保持历史签名；FetchResult.provider 含服务商名）。
     """
     result = run_chain(
-        providers, "fetch",
+        providers, "convert.page",
         lambda svc: svc.fetch(url, timeout=svc.timeout(30)),
         opts, log,
     )
@@ -137,9 +137,9 @@ def convert_chain(
     opts: ProviderOpts,
     log: LogFn = _stderr,
 ) -> Optional[FetchResult]:
-    """Local file → Markdown chain（markdown.new upload by default）。"""
+    """Local file → Markdown chain（convert.file：pdfinspector → markdown_new → mineru）。"""
     result = run_chain(
-        providers, "convert_file",
+        providers, "convert.file",
         lambda svc: svc.convert_file(path, timeout=svc.timeout(60)),
         opts, log,
     )

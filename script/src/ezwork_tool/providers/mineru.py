@@ -58,7 +58,7 @@ _INVALID_CODES = {-30001, -30002, -30003, -30004, -500, -10002}
 @register
 class MinerUProvider(Provider):
     name = "mineru"
-    capabilities = frozenset({"fetch", "convert_file"})
+    categories = frozenset({"convert.page", "convert.file"})
 
     @property
     def _v4(self) -> bool:

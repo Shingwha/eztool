@@ -2,7 +2,7 @@
 
 import unittest
 
-from ezwork_tool.formatter import format_search
+from ezwork_tool.formatter import format_data, format_image, format_search
 from ezwork_tool.base import SearchResponse, SearchResult
 
 
@@ -48,6 +48,41 @@ class TestFormatSearch(unittest.TestCase):
         out = format_search(_resp())
         self.assertIn("## Search Results: q", out)
         self.assertNotIn("### Results", out)
+
+
+class TestFormatImage(unittest.TestCase):
+    def test_direct_link_and_dimensions(self):
+        r = SearchResult(title="猫", url="https://x/i.png",
+                         extra={"width": 800, "height": 600, "shape": "横长方形"})
+        out = format_image(_resp([r]))
+        self.assertIn("## Images: q", out)
+        self.assertIn("![img](https://x/i.png)", out)
+        self.assertIn("800×600", out)
+        self.assertIn("横长方形", out)
+
+    def test_missing_dims_omitted(self):
+        r = SearchResult(title="猫", url="https://x/i.png")
+        out = format_image(_resp([r]))
+        self.assertNotIn("×", out)
+
+    def test_footer(self):
+        out = format_image(_resp([SearchResult(title="t", url="u")]))
+        self.assertIn("backend: anysearch", out)
+        self.assertIn("total: 2", out)
+
+
+class TestFormatData(unittest.TestCase):
+    def test_source_annotation(self):
+        r = SearchResult(title="AAPL", url="u", snippet="s",
+                         extra={"ticker": "AAPL"})
+        r.source = "anysearch"
+        out = format_data(_resp([r]))
+        self.assertIn("## Data Results: q", out)
+        self.assertIn("**[anysearch]**", out)
+
+    def test_no_source_no_tag(self):
+        out = format_data(_resp([SearchResult(title="t", url="u")]))
+        self.assertNotIn("**[", out)
 
 
 if __name__ == "__main__":

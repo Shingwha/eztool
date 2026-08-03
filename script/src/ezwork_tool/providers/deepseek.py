@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Literal
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
+from ..base import Provider, SearchResponse, SearchResult
 from ..errors import (
     CATEGORY_HTTP,
     CATEGORY_NETWORK,
@@ -258,7 +258,7 @@ class DeepSeekProvider(Provider):
     """deepseek 搜索后端（服务端搜索 + AI 合成回答）。"""
 
     name = "deepseek"
-    capabilities = frozenset({"search"})
+    categories = frozenset({"search.web"})
     # deepseek 无特有 CLI 参数（count/full 由服务端决定，忽略）
 
     def has_credentials(self, cfg: dict) -> bool:

@@ -1,35 +1,53 @@
-"""统一服务商注册表：search / fetch / convert 三类能力一个注册点。
+"""统一服务商注册表：类别（category）即路由单元，一个注册点。
 
-行业惯例（插件式注册）：服务商类声明 ``name`` + ``capabilities`` +
-``search_params``，``@register`` 登记；CLI 参数生成、回退链、凭证检查、
-``--list-providers`` 全部只消费注册表——新增服务商不再改动任何公共代码。
+类别是路由与参数归属的最小单元，命名 ``<域>.<操作>``（search.web /
+search.image / search.paper / search.data / convert.page / convert.file）。
+服务商类声明 ``name`` + ``categories`` + ``category_params``，``@register``
+登记；CLI 子命令生成、回退链过滤、参数面、凭证检查、``--list-providers``
+全部只消费本注册表——新增类别 / 新增 provider 不再改动任何公共代码。
 """
 
 from __future__ import annotations
 
-from .base import Provider, ProviderOpts
+import re
+
+from .base import ParamSpec, Provider, ProviderOpts
 from .errors import CATEGORY_INVALID, ServiceError
 
 SERVICES: dict[str, type[Provider]] = {}
 
-# search 特有参数 → 归属服务商（注册时校验全局唯一）
-_search_param_owners: dict[str, str] = {}
+# 类别 → 支持该类别的 provider 名（按注册顺序；回退链候选与默认配置同源）
+CATEGORIES: dict[str, list[str]] = {}
+
+_CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+
+
+def _validate_category(cat: str, cls_name: str) -> None:
+    if not _CATEGORY_RE.match(cat):
+        raise ValueError(
+            f"Provider {cls_name}: invalid category '{cat}' "
+            f"(must be '<domain>.<operation>', e.g. 'search.web')"
+        )
 
 
 def register(cls: type[Provider]) -> type[Provider]:
-    """类装饰器：把服务商登记到注册表。"""
+    """类装饰器：把服务商登记到注册表（校验 name / 类别 / 参数归属）。"""
     if not cls.name:
         raise ValueError(f"Provider {cls.__name__} must define a non-empty 'name'")
     if cls.name in SERVICES:
         raise ValueError(f"duplicate provider name: {cls.name}")
-    for pname in cls.search_params:
-        owner = _search_param_owners.get(pname)
-        if owner is not None:
-            raise ValueError(
-                f"search param '{pname}' already owned by '{owner}' "
-                f"(cannot also be declared by '{cls.name}')"
-            )
-        _search_param_owners[pname] = cls.name
+
+    for cat in cls.categories:
+        _validate_category(cat, cls.__name__)
+        for pname in (cls.category_params or {}).get(cat, {}):
+            for other in CATEGORIES.get(cat, []):
+                if pname in (SERVICES[other].category_params or {}).get(cat, {}):
+                    raise ValueError(
+                        f"category param '{pname}' of '{cls.name}' already "
+                        f"declared by '{other}' for category '{cat}'"
+                    )
+        CATEGORIES.setdefault(cat, []).append(cls.name)
+
     SERVICES[cls.name] = cls
     return cls
 
@@ -50,24 +68,43 @@ def service_names() -> list[str]:
     return sorted(SERVICES)
 
 
-def search_services() -> list[str]:
-    """具备 search 能力的服务商（``eztool search --backend`` 候选）。"""
-    return sorted(n for n, c in SERVICES.items() if "search" in c.capabilities)
+def providers_for(category: str) -> list[str]:
+    """该类别的回退链候选（注册顺序）。未知类别 → ServiceError。"""
+    try:
+        return list(CATEGORIES[category])
+    except KeyError:
+        known = ", ".join(sorted(CATEGORIES)) or "(none)"
+        raise ServiceError(
+            f"unknown category '{category}' (available: {known})", CATEGORY_INVALID
+        ) from None
 
 
-def search_param_owners() -> dict[str, str]:
-    """search 特有参数 → 归属服务商（参数归属校验用）。"""
-    return dict(_search_param_owners)
-
-
-def all_search_params() -> dict:
-    """合并全部 search 服务商的特有参数声明（CLI 生成 argparse 用）。"""
-    out: dict = {}
-    for name in search_services():
-        out.update(SERVICES[name].search_params)
+def category_params(category: str) -> dict[str, ParamSpec]:
+    """该类别全部 provider 的 category_params 并集（CLI 生成 argparse 用）。"""
+    out: dict[str, ParamSpec] = {}
+    for name in providers_for(category):
+        out.update((SERVICES[name].category_params or {}).get(category, {}))
     return out
 
 
-def file_convert_services() -> list[str]:
-    """具备 convert_file 能力的服务商（``eztool convert --list-providers``）。"""
-    return sorted(n for n, c in SERVICES.items() if "convert_file" in c.capabilities)
+def search_categories() -> list[str]:
+    """全部 search.* 类别（排序）→ CLI 生成 search 子命令。"""
+    return sorted(c for c in CATEGORIES if c.startswith("search."))
+
+
+def convert_page_services() -> list[str]:
+    """convert.page（URL → Markdown）候选。"""
+    return list(CATEGORIES.get("convert.page", []))
+
+
+def convert_file_services() -> list[str]:
+    """convert.file（本地文件 → Markdown）候选。"""
+    return list(CATEGORIES.get("convert.file", []))
+
+
+def category_of_name(name: str) -> str | None:
+    """provider 归属的类别（--list-providers 展示用）；未注册返回 None。"""
+    for cat, names in CATEGORIES.items():
+        if name in names:
+            return cat
+    return None

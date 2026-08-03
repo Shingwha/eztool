@@ -100,7 +100,7 @@ class TestConvertFileHttp(unittest.TestCase):
             result = self.provider.convert_file(path, timeout=99)
             self.assertEqual(result.content, "# T\n\nbody")
             self.assertEqual(result.tokens, 42)
-            self.assertEqual(result.provider, "markdown")
+            self.assertEqual(result.provider, "markdown_new")
             # multipart POST，不是 GET
             req = urlopen.call_args[0][0]
             self.assertEqual(req.method, "POST")
@@ -168,10 +168,10 @@ class TestConvertFileHttp(unittest.TestCase):
 
 
 class TestConvertChain(unittest.TestCase):
-    """链会跳过无 convert_file 能力的 provider（jina），继续到 markdown。"""
+    """链会跳过无 convert.file 类别的 provider（jina_reader），继续到 markdown_new。"""
 
     @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
-    def test_skips_url_only_provider(self, urlopen):
+    def test_skips_page_only_provider(self, urlopen):
         urlopen.return_value = _ok_response({
             "success": True,
             "data": {"content": "# ok"},
@@ -181,24 +181,79 @@ class TestConvertChain(unittest.TestCase):
         try:
             logs: list[str] = []
             result = chainmod.convert_chain(
-                path, ["jina", "markdown"], pmod.ProviderOpts(), log=logs.append
+                path, ["jina_reader", "markdown_new"], pmod.ProviderOpts(), log=logs.append
             )
             self.assertIsNotNone(result)
-            self.assertEqual(result.provider, "markdown")
-            self.assertTrue(any("jina" in l and "skipped" in l for l in logs))
+            self.assertEqual(result.provider, "markdown_new")
+            self.assertTrue(any("jina_reader" in l and "skipped" in l for l in logs))
         finally:
             os.remove(path)
 
 
 class TestConvertEntry(unittest.TestCase):
-    def test_all_failed_raises_backend_error(self):
+    """convert 按输入类型路由：URL → convert.page 链；本地路径 → convert.file 链。"""
+
+    def test_missing_local_path_is_usage_error(self):
+        from ezwork_tool.errors import UsageError
+
+        with self.assertRaises(UsageError):
+            convert({}, "C:/definitely/missing/file.pdf")
+
+    @mock.patch("ezwork_tool.api.run_chain")
+    def test_url_routes_to_page_chain(self, run_chain):
+        run_chain.return_value = (
+            pmod.FetchResult(provider="markdown_new", content="# ok",
+                             url="https://example.com/a", elapsed=0.1),
+            "markdown_new",
+        )
+        result = convert({}, "https://example.com/a", {})
+        self.assertEqual(result.provider, "markdown_new")
+        category = run_chain.call_args[0][1]
+        self.assertEqual(category, "convert.page")
+
+    @mock.patch("ezwork_tool.api.run_chain")
+    def test_local_path_routes_to_file_chain(self, run_chain):
+        run_chain.return_value = (
+            pmod.FetchResult(provider="markdown_new", content="# ok",
+                             url="", elapsed=0.1),
+            "markdown_new",
+        )
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+            path = f.name
+        try:
+            result = convert({}, path, {})
+            self.assertEqual(result.provider, "markdown_new")
+            category = run_chain.call_args[0][1]
+            self.assertEqual(category, "convert.file")
+        finally:
+            os.remove(path)
+
+    @mock.patch("ezwork_tool.api.run_chain")
+    def test_all_failed_raises_convert_error(self, run_chain):
         from ezwork_tool.errors import ServiceError
 
-        cfg = {"convert": {"providers": ["markdown"], "timeout": 5},
-               "providers": {"markdown": {}}}
+        run_chain.return_value = None
         with self.assertRaises(ServiceError) as ctx:
-            convert(cfg, "C:/definitely/missing/file.pdf")
+            convert({}, "https://example.com/a")
         self.assertEqual(ctx.exception.code, "convert_failed")
+
+    def test_unknown_provider_usage_error(self):
+        from ezwork_tool.errors import UsageError
+
+        with self.assertRaises(UsageError):
+            convert({}, "https://example.com/a", {"providers": "nope"})
+
+    @mock.patch("ezwork_tool.api.run_chain")
+    def test_providers_override_passed_to_chain(self, run_chain):
+        from ezwork_tool.base import FetchResult
+
+        run_chain.return_value = (FetchResult(provider="jina_reader", content="# ok",
+                                              url="https://example.com/a", elapsed=0.1),
+                                  "jina_reader")
+        result = convert({}, "https://example.com/a", {"providers": "jina_reader"})
+        self.assertEqual(result.provider, "jina_reader")
+        names = run_chain.call_args[0][0]
+        self.assertEqual(names, ["jina_reader"])
 
 
 if __name__ == "__main__":

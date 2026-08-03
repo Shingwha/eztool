@@ -1,8 +1,14 @@
 """统一数据结构和 Provider 基类：search / fetch / convert_file 三种能力。
 
-服务商（provider）是唯一扩展点：子类声明 ``name`` + ``capabilities``，
-实现对应能力方法，``@register`` 登记后即可被 CLI / 回退链 / 配置消费。
-未实现的能力默认抛 CATEGORY_INVALID（chain 也会按 capabilities 预跳过）。
+服务商（provider）是唯一扩展点：子类声明 ``name`` + ``categories``（支持
+哪些类别，如 ``{"search.web", "search.image"}``）+ ``category_params``
+（每类别的 provider 特有参数），实现对应能力方法，``@register`` 登记后
+即可被 CLI / 回退链 / 配置消费。
+
+类别（category）是路由与参数归属的最小单元，命名 ``<域>.<操作>``：
+``search.web`` / ``search.image`` / ``search.paper`` / ``search.data`` /
+``convert.page`` / ``convert.file``。回退链按类别过滤，命令参数按类别归属，
+三者由同一张注册表（registry.CATEGORIES）驱动。
 """
 
 from __future__ import annotations
@@ -78,7 +84,7 @@ class SearchResponse:
 
 @dataclass
 class ParamSpec:
-    """search 特有参数的声明（CLI 自动生成 argparse 参数 + 归属校验）。
+    """provider 特有参数的声明（CLI 自动生成 argparse 参数 + 归属校验）。
 
     type 仅 str/int；bool 用 action="store_true"（默认 None，传了为 True）。
     """
@@ -91,11 +97,16 @@ class ParamSpec:
 
 
 class Provider:
-    """服务商基类。子类声明 name + capabilities，实现对应能力方法。"""
+    """服务商基类。子类声明 name + categories + category_params，实现对应能力方法。
+
+    - ``categories``：支持哪些类别（可多类别），回退链据此过滤。
+    - ``category_params``：``{类别: {参数名: ParamSpec}}``，该类别子命令的参数面
+      由注册表自动并入。
+    """
 
     name: str = ""
-    capabilities: frozenset = frozenset()  # {"search"} / {"fetch"} / {"fetch", "convert_file"}
-    search_params: dict[str, ParamSpec] = {}  # search 特有参数声明（CLI 生成）
+    categories: frozenset = frozenset()
+    category_params: dict[str, dict[str, ParamSpec]] = {}
     base_url: str = ""
 
     def __init__(self, opts: ProviderOpts | None = None) -> None:

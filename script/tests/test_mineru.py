@@ -247,9 +247,10 @@ class TestFetchFlow(unittest.TestCase):
 
 class TestRegistered(unittest.TestCase):
     def test_mineru_registered_and_has_convert_capability(self):
-        from ezwork_tool.api import list_convert_providers, list_providers
+        from ezwork_tool.api import list_category_providers, list_providers
         self.assertIn("mineru", list_providers())
-        self.assertIn("mineru", list_convert_providers())
+        self.assertIn("mineru", list_category_providers("convert.file"))
+        self.assertIn("mineru", list_category_providers("convert.page"))
 
 
 class TestV1NoToken(unittest.TestCase):

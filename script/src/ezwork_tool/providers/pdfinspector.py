@@ -55,7 +55,7 @@ class PdfInspectorProvider(Provider):
     """本地 PDF 解析：快、免费、无网络；无 OCR，不合适时快速降级。"""
 
     name = "pdfinspector"
-    capabilities = frozenset({"convert_file"})
+    categories = frozenset({"convert.file"})
 
     def has_credentials(self, cfg: dict) -> bool:
         """本地库没有凭证概念：已安装即视为可用。"""
@@ -64,6 +64,10 @@ class PdfInspectorProvider(Provider):
             return True
         except ServiceError:
             return False
+
+    def test_credentials(self, cfg: dict) -> str:
+        _load_library()  # 未安装抛可跳过的错误
+        return "本地库已安装（无需凭证）"
 
     def convert_file(self, path: str, timeout: int = 60) -> FetchResult:
         """本地 PDF → Markdown；不合适/失败时抛错交给回退链。"""
