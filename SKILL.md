@@ -23,7 +23,7 @@ description: >-
 | 用户想要 | 用 |
 |---|---|
 | 联网搜索最新信息（新闻 / 版本发布 / 价格 / 事实核查） | `eztool search "<query>"` |
-| 图片搜索 | `eztool search "猫" --image` |
+| 图片搜索（**仅 doubao 后端支持**，auto 会静默忽略 --image） | `eztool search "猫" --image --backend doubao` |
 | **论文 / 文献搜索**（含年份/作者/引用排序/开放获取过滤） | `eztool paper "<query>" [--year 2023 --sort cited --oa]` |
 | 学术 / 代码 / 金融行情 / CVE / 法律 / 旅行等专业数据 | `eztool search ... --tag <标签>`（先 `eztool tags` 看清单） |
 | AI 综合回答 + 来源列表 | `eztool search ... --backend deepseek` |

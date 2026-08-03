@@ -8,7 +8,7 @@
 ```bash
 eztool search "Rust async 2026"                  # auto 逐个回退后端
 eztool search "AAPL" --tag finance.quote         # anysearch 数据源
-eztool search "猫" --image                       # doubao 图片搜索
+eztool search "猫" --image --backend doubao      # 图片搜索（--image 仅 doubao 后端支持）
 eztool search "q" --backend deepseek             # DeepSeek AI 合成回答
 eztool search "q" --backend openalex,arxiv       # 多后端并行汇总（去重合并）
 eztool paper "vision transformer"                # 论文搜索：openalex+arxiv+crossref 三源汇总
