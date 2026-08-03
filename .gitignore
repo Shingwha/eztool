@@ -3,3 +3,7 @@ __pycache__/
 dist/
 build/
 .venv/
+.DS_Store
+*.pyc
+*.swp
+*.bak
