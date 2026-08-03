@@ -7,15 +7,18 @@ from __future__ import annotations
 
 from . import (  # noqa: F401  (side-effect: register)
     anysearch,
+    arxiv,
+    crossref,
     deepseek,
     doubao,
     firecrawl,
     jina_reader,
     markdown_new,
     mineru,
+    openalex,
 )
 
 __all__ = [
-    "anysearch", "deepseek", "doubao",
-    "firecrawl", "jina_reader", "markdown_new", "mineru",
+    "anysearch", "arxiv", "crossref", "deepseek", "doubao",
+    "firecrawl", "jina_reader", "markdown_new", "mineru", "openalex",
 ]

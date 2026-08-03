@@ -16,7 +16,7 @@ from . import __version__
 from . import api
 from . import config as cfgmod
 from .errors import EztoolError, UsageError
-from .formatter import format_search, format_tags
+from .formatter import format_paper, format_search, format_tags
 from .registry import (
     all_search_params,
     create_service,
@@ -28,7 +28,7 @@ from .providers.anysearch import KNOWN_TAGS
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="eztool",
-        description="统一搜索（doubao / deepseek / anysearch）+ URL 抓取转 Markdown。一个工具，一个 skill。",
+        description="统一搜索（doubao / deepseek / anysearch / openalex / arxiv / crossref）+ 论文汇总搜索（paper）+ URL 抓取转 Markdown。一个工具，一个 skill。",
     )
     p.add_argument("--version", action="version", version=f"eztool {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
@@ -37,9 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     # 特有参数来自注册表：各搜索服务商声明的 search_params 自动展开
     sp = sub.add_parser("search", help="搜索（--backend 选后端，默认 auto 自动回退）")
     sp.add_argument("query", help="搜索词")
-    backends = ("auto",) + tuple(search_services())
-    sp.add_argument("--backend", choices=backends, default="auto",
-                    help="后端；auto 按 search.providers 链回退（默认 anysearch→doubao→deepseek，免费优先）")
+    sp.add_argument("--backend", default="auto",
+                    help="后端；auto=按 search.providers 链失败回退；逗号分隔=多后端并行汇总（如 openalex,arxiv）")
     sp.add_argument("--providers", help="覆盖搜索回退链，逗号分隔（仅 auto 模式生效）")
     sp.add_argument("--count", type=int, default=None,
                     help="结果条数（doubao≤50 / anysearch≤20 / deepseek 忽略）")
@@ -78,6 +77,19 @@ def build_parser() -> argparse.ArgumentParser:
     # ── tags ────────────────────────────────────────────────
     tp = sub.add_parser("tags", help="列出 AnySearch 数据源标签")
     tp.set_defaults(func=cmd_tags)
+
+    # ── paper ───────────────────────────────────────────────
+    pp = sub.add_parser("paper", help="论文搜索（默认并行汇总 openalex+arxiv+crossref，去重合并）")
+    pp.add_argument("query", help="论文搜索词")
+    pp.add_argument("--providers", help="覆盖论文源列表，逗号分隔（默认 openalex,arxiv,crossref）")
+    pp.add_argument("--year", metavar="YEAR", help="出版年份或区间，如 2023 或 2020-2024")
+    pp.add_argument("--author", metavar="NAME", help="作者名过滤")
+    pp.add_argument("--sort", choices=("relevance", "cited", "date"), help="排序：relevance（默认）/cited（引用数）/date（年份）")
+    pp.add_argument("--oa", action="store_true", help="仅开放获取论文")
+    pp.add_argument("--count", type=int, default=None, help="每个数据源的结果数（默认 10）")
+    pp.add_argument("--timeout", type=int, default=None, help="请求超时秒数")
+    pp.add_argument("--full", action="store_true", help="显示完整摘要而非 300 字预览")
+    pp.set_defaults(func=cmd_paper)
 
     # ── config ──────────────────────────────────────────────
     cp = sub.add_parser("config", help="配置管理（~/.config/ezwork-tool/config.json）")
@@ -149,6 +161,19 @@ def cmd_convert(args: argparse.Namespace) -> None:
 
 def cmd_tags(args: argparse.Namespace) -> None:
     print(format_tags(KNOWN_TAGS))
+
+
+# ── paper ──────────────────────────────────────────────────
+
+def cmd_paper(args: argparse.Namespace) -> None:
+    cfg = cfgmod.load_config()
+    opts = {
+        "providers": args.providers, "count": args.count, "timeout": args.timeout,
+        "year": args.year, "author": args.author, "sort": args.sort,
+        "oa": args.oa, "full": args.full,
+    }
+    resp = api.paper(cfg, args.query, opts)
+    print(format_paper(resp, full=args.full))
 
 
 # ── config ─────────────────────────────────────────────────

@@ -63,6 +63,7 @@ class SearchResult:
     snippet: str = ""
     content: str | None = None  # 正文（anysearch 常带；doubao 需 need_content）
     extra: dict | None = None   # 后端特有元数据（如 deepseek 的 page_age）
+    source: str | None = None   # 命中的 provider 名（fan-out 合并时回填）
 
 
 @dataclass

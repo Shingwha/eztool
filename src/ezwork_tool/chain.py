@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import Callable, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Optional
 
 from .base import FetchResult, ProviderOpts, SearchResponse
 from .errors import ServiceError
@@ -68,6 +69,48 @@ def run_chain(
 
     log("all providers failed")
     return None
+
+
+def run_fanout(
+    names: list[str],
+    capability: str,
+    invoke: Callable,
+    opts: ProviderOpts | None = None,
+    log: LogFn = _stderr,
+) -> list[tuple[str, Any]]:
+    """并行执行所有 provider（fan-out），互不中断、不失败回退。
+
+    与 run_chain 语义相同（create_service 失败 / 无 capability / ServiceError
+    都只 log 后继续），但**不中断**：每个 name 各自 try，成败互不影响。
+    返回成功结果列表，**保持 names 传入顺序**（``ex.map`` 天然保序）：
+    ``[(name, result), ...]``；全部失败返回空列表。
+    """
+    def _run(name: str):
+        try:
+            svc = create_service(name, opts)
+        except ServiceError as e:  # unknown provider — 单独失败，不影响其他
+            log(f"[{name}] failed: {e}")
+            return None
+
+        if capability not in svc.capabilities:
+            log(f"[{name}] skipped: no '{capability}' capability")
+            return None
+
+        t0 = time.monotonic()
+        try:
+            result = invoke(svc)
+        except ServiceError as e:
+            elapsed = round(time.monotonic() - t0, 3)
+            log(f"[{name}] failed: {e} ({elapsed}s)")
+            return None
+
+        elapsed = round(time.monotonic() - t0, 3)
+        log(f"[{name}] OK ({elapsed}s, {_size(result)})")
+        return result
+
+    with ThreadPoolExecutor(max_workers=len(names) or 1) as ex:
+        results = list(ex.map(_run, names))
+    return [(name, r) for name, r in zip(names, results) if r is not None]
 
 
 def fetch_chain(
