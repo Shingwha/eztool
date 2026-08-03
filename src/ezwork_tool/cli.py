@@ -81,7 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     # ── paper ───────────────────────────────────────────────
     pp = sub.add_parser("paper", help="论文搜索（默认并行汇总 openalex+arxiv+crossref，去重合并）")
     pp.add_argument("query", help="论文搜索词")
-    pp.add_argument("--providers", help="覆盖论文源列表，逗号分隔（默认 openalex,arxiv,crossref）")
+    pp.add_argument("--backend", default="auto",
+                    help="论文源；auto=用 paper.providers 配置（默认 openalex,arxiv,crossref）；逗号分隔=多源并行汇总（如 openalex,arxiv）；单个=只用该源")
     pp.add_argument("--year", metavar="YEAR", help="出版年份或区间，如 2023 或 2020-2024")
     pp.add_argument("--author", metavar="NAME", help="作者名过滤")
     pp.add_argument("--sort", choices=("relevance", "cited", "date"), help="排序：relevance（默认）/cited（引用数）/date（年份）")
@@ -168,7 +169,7 @@ def cmd_tags(args: argparse.Namespace) -> None:
 def cmd_paper(args: argparse.Namespace) -> None:
     cfg = cfgmod.load_config()
     opts = {
-        "providers": args.providers, "count": args.count, "timeout": args.timeout,
+        "backend": args.backend, "count": args.count, "timeout": args.timeout,
         "year": args.year, "author": args.author, "sort": args.sort,
         "oa": args.oa, "full": args.full,
     }

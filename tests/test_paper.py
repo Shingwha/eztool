@@ -237,19 +237,29 @@ class TestPaperEntry(unittest.TestCase):
         self.assertEqual(resp.metadata["backend"], "openalex,arxiv,crossref")
         self.assertEqual(len(resp.results), 3)
 
-    def test_providers_override(self):
-        resp = api.paper({}, "q", {"providers": "arxiv,openalex"})
+    def test_backend_list_override(self):
+        resp = api.paper({}, "q", {"backend": "arxiv,openalex"})
         self.assertEqual(resp.metadata["backend"], "arxiv,openalex")
         self.assertEqual([r.source for r in resp.results], ["arxiv", "openalex"])
+
+    def test_backend_single_source(self):
+        resp = api.paper({}, "q", {"backend": "crossref"})
+        self.assertEqual(resp.metadata["backend"], "crossref")
+        self.assertEqual([r.source for r in resp.results], ["crossref"])
 
     def test_config_section_order(self):
         cfg = {"paper": {"providers": ["crossref"]}}
         resp = api.paper(cfg, "q")
         self.assertEqual(resp.metadata["backend"], "crossref")
 
-    def test_unknown_provider_usage_error(self):
+    def test_providers_key_backward_compat(self):
+        # 程序化调用仍可用 providers 键（等价 backend 逗号列表）
+        resp = api.paper({}, "q", {"providers": "arxiv,openalex"})
+        self.assertEqual(resp.metadata["backend"], "arxiv,openalex")
+
+    def test_unknown_backend_usage_error(self):
         with self.assertRaises(UsageError):
-            api.paper({}, "q", {"providers": "openalex,nope"})
+            api.paper({}, "q", {"backend": "openalex,nope"})
 
     def test_all_fail_raises_service_error(self):
         for n in ("openalex", "arxiv", "crossref"):

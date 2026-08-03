@@ -131,7 +131,7 @@ eztool paper "LLM reasoning" --year 2024               # 年份或区间（2020-
 eztool paper "attention" --author Vaswani              # 作者过滤
 eztool paper "survey" --sort cited --count 20          # 按引用数排序（relevance/cited/date）
 eztool paper "medical" --oa                            # 仅开放获取
-eztool paper "x" --providers openalex,crossref         # 指定源（或 eztool config set paper.providers ...）
+eztool paper "x" --backend openalex,crossref     # 指定源（或 eztool config set paper.providers ...）
 ```
 
 - 输出论文卡片：标题链接 / 作者（前 3 + et al.）/ 年份 / 期刊 / ⭐引用数 / DOI / OA 直链 / 摘要预览；多源合并时每条带 `[openalex]` 等来源标签，头部显示各源命中数。
@@ -185,7 +185,7 @@ eztool tags
 ## Notes
 
 - **零依赖**纯标准库；输出无 `--json`，唯一格式就是 Markdown。
-- **参数归属**：`--tag/--zone/--language/--params/--anonymous` 仅 anysearch；`--image/--sites/--block-hosts/--time-range/--need-content/--need-url/--content-formats/--industry/--query-rewrite/--auth-info-level/--width-*/--height-*/--shapes` 仅 doubao；`--year/--author/--sort/--oa` 仅 openalex（search 命令下；paper 命令三源全通）；`--count/--timeout/--full/--providers` 公共。参数传给不支持的后端 → 报错 exit 2，不静默忽略。
+- **参数归属**：`--tag/--zone/--language/--params/--anonymous` 仅 anysearch；`--image/--sites/--block-hosts/--time-range/--need-content/--need-url/--content-formats/--industry/--query-rewrite/--auth-info-level/--width-*/--height-*/--shapes` 仅 doubao；`--year/--author/--sort/--oa` 仅 openalex（search 命令下；paper 命令三源全通）；`--count/--timeout/--full` 公共（search/paper 用 `--backend` 选后端，fetch/convert 用 `--providers` 覆盖回退链）。参数传给不支持的后端 → 报错 exit 2，不静默忽略。
 - **限流 / 配额**：doubao 5 QPS、免费 500 次/月；anysearch 匿名按 IP 限速；deepseek 每次约 8k–15k token；jina 无 key 约 20 RPM。
 - **网络**：jina/firecrawl 不可达时回退链自动跳过（默认超时 10s/60s），全部失败 exit 1。
 - **退出码**：0 成功 / 1 业务失败（含空结果）/ 2 用法或凭证缺失。

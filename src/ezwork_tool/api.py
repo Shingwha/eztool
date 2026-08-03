@@ -239,18 +239,25 @@ def _search_fanout(cfg: dict, names: list[str], query: str, opts: dict) -> Searc
 def paper(cfg: dict, query: str, opts: dict | None = None) -> SearchResponse:
     """论文搜索：默认并发搜 openalex + arxiv + crossref，合并去重。
 
-    opts 键：providers（逗号字符串覆盖默认三源）、count、timeout、year、
-    author、sort（relevance/cited/date）、oa、full（透传 formatter 用）。
+    opts 键：backend（"auto"=用 paper.providers 配置；逗号分隔=多源并行汇总；
+    单个=只用该源）、count、timeout、year、author、sort（relevance/cited/date）、
+    oa、full（透传 formatter 用）。opts.providers 保留程序化兼容（等价 backend）。
     """
     opts = opts or {}
     paper_cfg = cfg.get("paper") or {}
     if not isinstance(paper_cfg, dict):
         paper_cfg = {}
-    names = _chain_providers(paper_cfg, opts, PAPER_ORDER)
+    backend = opts.get("backend") or "auto"
+    if backend == "auto":
+        names = _chain_providers(paper_cfg, opts, PAPER_ORDER)
+    else:
+        names = [b.strip() for b in str(backend).split(",") if b.strip()]
+        if not names:
+            names = list(PAPER_ORDER)
     for b in names:
         if b not in search_services():
             known = ", ".join(search_services())
-            raise UsageError(f"未知后端 '{b}'（可用: {known}）")
+            raise UsageError(f"未知后端 '{b}'（可用: auto, {known}）")
     return _search_fanout(cfg, names, query, opts)
 
 

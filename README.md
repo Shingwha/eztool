@@ -51,7 +51,7 @@ eztool config test                   # 验证凭证
 
 - `--backend auto`（默认）：按 search.providers 链逐个尝试，失败自动换下一个（failover）。
 - `--backend a,b`（逗号分隔）：**多后端并行汇总**——同时搜、去重合并（按 DOI→URL→标题归一化，first wins），每条结果标注来源。
-- `eztool paper "query"`：论文专用命令，默认并行汇总 openalex+arxiv+crossref 三源，输出论文卡片（作者/年份/期刊/引用数/DOI/OA 链接），支持 `--year`（如 `2023` 或 `2020-2024`）、`--author`、`--sort relevance|cited|date`、`--oa`、`--count`、`--providers`。
+- `eztool paper "query"`：论文专用命令，默认并行汇总 openalex+arxiv+crossref 三源，输出论文卡片（作者/年份/期刊/引用数/DOI/OA 链接），支持 `--backend`（auto / 逗号列表 / 单个源）、`--year`（如 `2023` 或 `2020-2024`）、`--author`、`--sort relevance|cited|date`、`--oa`、`--count`。
 
 ## 开发
 
