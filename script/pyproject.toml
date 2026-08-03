@@ -2,7 +2,7 @@
 name = "ezwork-tool"
 version = "0.1.1"
 description = "Unified CLI: web/image search (Doubao / AnySearch / DeepSeek) + URL-to-Markdown fetch. One tool, one skill."
-readme = "README.md"
+readme = {text = "ezwork-tool: unified search / paper search / fetch / convert CLI (see repo root README.md)", content-type = "text/plain"}
 requires-python = ">=3.10"
 dependencies = []
 
