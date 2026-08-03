@@ -177,11 +177,12 @@ eztool tags
 ## Workflow for the Agent
 
 1. **搜索**：直接 `eztool search "<query>"`。默认 auto 路由即可；用户点名豆包/DeepSeek、需要图片或专业数据源时再显式加参数。
-2. **论文 / 文献**：用 `eztool paper "<query>"`（三源并行汇总，免凭证）。文献综述类需求加 `--sort cited` 找高引用论文、`--year` 限年份、`--oa` 找开放获取；多源合并自动按 DOI 去重。中文文献无公开 API，改用 `eztool search "..." --tag academic.search`（anysearch）。
-2. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。本地文件（PDF/DOCX/XLSX/图片/CSV/JSON 等）用 `eztool convert <file>` 转 Markdown，`--out` 可写文件；不支持的文件类型/超 10MB 会在本地快速报错（exit 1）。markdown.new 不支持的格式（如 PPTX、GIF/BMP）或转换失败会自动回退到 MinerU（免费无 Token，异步提取，默认开启 OCR，PDF 需 ≤20 页；配置 `providers.mineru.api_key` Token 后自动升级 v4：≤200MB/200 页/支持 doc/ppt/xls/html，输出 zip 自动解出 full.md）。
-3. **专业搜索**：先 `eztool tags` 看标签清单，再 `--tag` 定向；部分标签还需 `--params '{"key":"value"}'` 补充参数（如 `code.doc` 需要 `library`）。
-4. **凭证缺失**：报 `未配置 XX 凭证` 时，引导用户 `eztool config set <key>`，**绝不硬编码密钥**；用 `eztool config test` 验证。
-5. **失败处理**：exit 1 = 业务失败（无结果 / API 错误），exit 2 = 用法或凭证问题；错误在 stderr，格式 `error: <原因>` + `code: <语义码>`。
+2. **论文 / 文献**：用 `eztool paper "<query>"`（三源并行汇总，免凭证）。`--year` 限年份、`--oa` 找开放获取；多源合并自动按 DOI 去重。中文文献无公开 API，改用 `eztool search "..." --tag academic.search`（anysearch）。
+   - **`--sort cited` 如非必要少用**：它先按相关性取候选再按引用重排，多词查询（≥3 个词）时候选内仍可能混入只命中个别词的"泛相关"高引综述（如搜续驶里程估计出现 UAV/自动驾驶综述）。**默认相关性排序最稳**；只有单关键词/短语（如 "transformer"）或用户明确要"高引经典论文"时才用 `--sort cited`。
+3. **读全文**：搜索结果里的 URL 用 `eztool fetch <url>` 抓取（输出永不截断；stderr 的 `[provider] OK (耗时, 字数)` 是回退链日志，可判断走的哪个服务）。本地文件（PDF/DOCX/XLSX/图片/CSV/JSON 等）用 `eztool convert <file>` 转 Markdown，`--out` 可写文件；不支持的文件类型/超 10MB 会在本地快速报错（exit 1）。markdown.new 不支持的格式（如 PPTX、GIF/BMP）或转换失败会自动回退到 MinerU（免费无 Token，异步提取，默认开启 OCR，PDF 需 ≤20 页；配置 `providers.mineru.api_key` Token 后自动升级 v4：≤200MB/200 页/支持 doc/ppt/xls/html，输出 zip 自动解出 full.md）。
+4. **专业搜索**：先 `eztool tags` 看标签清单，再 `--tag` 定向；部分标签还需 `--params '{"key":"value"}'` 补充参数（如 `code.doc` 需要 `library`）。
+5. **凭证缺失**：报 `未配置 XX 凭证` 时，引导用户 `eztool config set <key>`，**绝不硬编码密钥**；用 `eztool config test` 验证。
+6. **失败处理**：exit 1 = 业务失败（无结果 / API 错误），exit 2 = 用法或凭证问题；错误在 stderr，格式 `error: <原因>` + `code: <语义码>`。
 
 ## Notes
 
