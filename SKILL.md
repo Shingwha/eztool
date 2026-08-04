@@ -84,6 +84,8 @@ anysearch，40+ 标签定向数据源（学术/代码/金融/CVE/法律/旅行�
 | `--timeout N` | 超时秒数（覆盖配置） |
 | `--list-providers` | 列出两类链的可用 provider |
 
+> 微信公众号文章其他 provider 基本被反爬拦截，优先 `--providers tavily`。
+
 ### `eztool config` — 配置管理
 `show`（全部配置 + 文件路径）｜`set <key> [值]`（省略值交互输入）｜`get <key>`｜`reset <key>`｜`test [--providers <名>]`（验证凭证）｜`clear`（删配置文件）。配置存于 `~/.config/ezwork-tool/config.json`，全部键见 `references/configuration.md`。
 
