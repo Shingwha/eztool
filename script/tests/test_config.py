@@ -45,7 +45,7 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_defaults_when_no_file(self):
         cfg = self._load_in()
-        self.assertEqual(cfg["providers"]["anysearch"]["max_results"], 10)
+        self.assertEqual(cfg["providers"]["anysearch"]["max_results"], 20)
         self.assertEqual(cfg["search"]["web"]["providers"],
                          ["doubao", "anysearch", "deepseek"])
         self.assertEqual(cfg["search"]["image"]["providers"], ["doubao"])
@@ -68,7 +68,7 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_corrupt_file_falls_back(self):
         cfg = self._load_in("{not json")
-        self.assertEqual(cfg["providers"]["doubao"]["count_web"], 10)
+        self.assertEqual(cfg["providers"]["doubao"]["count_web"], 20)
 
 
 class TestParseValue(unittest.TestCase):

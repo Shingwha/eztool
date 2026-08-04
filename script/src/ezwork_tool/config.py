@@ -20,11 +20,11 @@ DEFAULTS: dict[str, Any] = {
     "providers": {
         "doubao": {
             "api_key": None, "ak": None, "sk": None, "auth": None,
-            "count_web": 10, "count_image": 5, "need_url": False,
+            "count_web": 20, "count_image": 5, "need_url": False,
             "need_content": False, "content_formats": None,
             "time_range": None, "industry": None, "timeout": 30,
         },
-        "anysearch": {"api_key": None, "max_results": 10},
+        "anysearch": {"api_key": None, "max_results": 20},
         "deepseek": {"api_key": None, "model": "deepseek-v4-flash",
                      "thinking": "enabled", "max_tokens": 32768},
         "firecrawl": {"api_key": None, "timeout": 60},

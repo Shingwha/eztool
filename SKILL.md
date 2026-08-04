@@ -31,7 +31,7 @@ description: >-
 
 ## 完整命令参考
 
-> `--count` 默认值已合理（网页/图片/数据 10，论文每源 10），如非必要不要加。
+> `--count` 默认值已合理（网页/数据 20，图片 5，论文每源 10），如非必要不要加。
 
 ### `eztool search web <query>` — 通用网页搜索
 回退链 doubao → anysearch → deepseek（免费/匿名优先，失败自动换下一个）。
