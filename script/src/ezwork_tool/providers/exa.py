@@ -148,8 +148,10 @@ class ExaProvider(Provider):
             "content_type": ParamSpec(
                 choices=_CATEGORIES, help="内容类别（Exa category）：company/publication/news/people 等"
             ),
-            # include_domains / exclude_domains 由 tavily 声明（类别级参数，并集合并，
-            # 本 provider 仍从 opts 读取）——registry 禁止同类别跨 provider 重名
+            # include_domains / exclude_domains 是 search.web 类别公共参数
+            # （registry.PUBLIC_PARAMS），无需声明，直接读 opts
+            # 注意：不能叫 category——与 CLI 内部路由字段（set_defaults 的
+            # category="search.web"）冲突，会被参数归属校验误判为传参
             "date_start": ParamSpec(metavar="YYYY-MM-DD", help="只返回此日期后发布的"),
             "date_end": ParamSpec(metavar="YYYY-MM-DD", help="只返回此日期前发布的"),
             "with_content": ParamSpec(

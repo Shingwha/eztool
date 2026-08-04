@@ -130,10 +130,6 @@ class TavilyProvider(Provider):
             "time_range": ParamSpec(
                 choices=_TIME_RANGES, help="按发布时间过滤：day/week/month/year"
             ),
-            "include_domains": ParamSpec(
-                metavar="DOMAINS", help="只搜这些域名，逗号分隔，如 mp.weixin.qq.com"
-            ),
-            "exclude_domains": ParamSpec(metavar="DOMAINS", help="排除域名，逗号分隔"),
         },
     }
 

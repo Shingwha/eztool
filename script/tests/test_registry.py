@@ -85,6 +85,12 @@ class TestRegister(unittest.TestCase):
             register(_make("reg_p2", {"search.web"},
                            {"search.web": {"tag": ParamSpec()}}))
 
+    def test_public_param_collision_rejected(self):
+        """provider 不得声明与类别公共参数同名的参数。"""
+        with self.assertRaises(ValueError):
+            register(_make("reg_pp", {"search.web"},
+                           {"search.web": {"include_domains": ParamSpec()}}))
+
     def test_same_param_in_different_category_ok(self):
         register(_make("reg_q1", {"search.web", "search.data"},
                        {"search.web": {"tag": ParamSpec()},
@@ -116,11 +122,20 @@ class TestLookups(unittest.TestCase):
 
     def test_category_params_union(self):
         params = category_params("search.web")
-        self.assertEqual(set(params), {"foo", "bar"})
+        self.assertLessEqual({"foo", "bar"}, set(params))
         self.assertEqual(params["bar"].type, int)
 
+    def test_category_params_include_public(self):
+        """类别公共参数（PUBLIC_PARAMS）自动并入，无归属 provider。"""
+        params = category_params("search.web")
+        self.assertIn("include_domains", params)
+        self.assertIn("exclude_domains", params)
+
     def test_category_params_order_is_registration_order(self):
-        self.assertEqual(list(category_params("search.web")), ["foo", "bar"])
+        """provider 参数按注册顺序在前，公共参数追加在后。"""
+        params = list(category_params("search.web"))
+        self.assertEqual(params[:2], ["foo", "bar"])
+        self.assertEqual(params[2:], ["include_domains", "exclude_domains"])
 
     def test_search_categories_sorted(self):
         self.assertEqual(search_categories(), ["search.paper", "search.web"])
