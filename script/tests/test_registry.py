@@ -91,6 +91,13 @@ class TestRegister(unittest.TestCase):
             register(_make("reg_pp", {"search.web"},
                            {"search.web": {"include_domains": ParamSpec()}}))
 
+    def test_reserved_param_name_rejected(self):
+        """provider 不得声明 CLI 内部字段名（会篡改路由/分派）。"""
+        for reserved in ("category", "func", "command", "query", "count"):
+            with self.assertRaises(ValueError, msg=reserved):
+                register(_make(f"reg_r_{reserved}", {"search.web"},
+                               {"search.web": {reserved: ParamSpec()}}))
+
     def test_same_param_in_different_category_ok(self):
         register(_make("reg_q1", {"search.web", "search.data"},
                        {"search.web": {"tag": ParamSpec()},

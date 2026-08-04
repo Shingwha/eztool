@@ -31,6 +31,18 @@ PUBLIC_PARAMS: dict[str, dict[str, ParamSpec]] = {
     },
 }
 
+# CLI 内部字段（subparser dest / set_defaults / 硬编码参数）：
+# provider 参数名与之冲突会覆盖路由与分派（如 --category 篡改路由类别、
+# --func 劫持命令分派），注册期必须拒绝。
+RESERVED_PARAM_NAMES = frozenset({
+    "command", "search_cmd", "config_cmd",   # subparser dest
+    "func", "category",                      # set_defaults 注入（默认值非 None，最危险）
+    "query", "providers", "count", "timeout",
+    "year", "author", "sort", "oa",
+    "target", "out", "list_providers",
+    "key", "value", "version",
+})
+
 _CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 
 
@@ -52,6 +64,12 @@ def register(cls: type[Provider]) -> type[Provider]:
     for cat in cls.categories:
         _validate_category(cat, cls.__name__)
         for pname in (cls.category_params or {}).get(cat, {}):
+            if pname in RESERVED_PARAM_NAMES:
+                raise ValueError(
+                    f"category param '{pname}' of '{cls.name}' collides with a "
+                    f"reserved CLI field (would corrupt routing/dispatch); "
+                    f"rename the param (e.g. '--{pname}-x')"
+                )
             if pname in PUBLIC_PARAMS.get(cat, {}):
                 raise ValueError(
                     f"category param '{pname}' of '{cls.name}' collides with "
