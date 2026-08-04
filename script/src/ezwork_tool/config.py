@@ -35,6 +35,8 @@ DEFAULTS: dict[str, Any] = {
         "openalex": {"mailto": None, "timeout": 30},
         "arxiv": {"timeout": 30},
         "crossref": {"timeout": 30},
+        "tavily": {"api_key": None, "timeout": 30},
+        "exa": {"api_key": None, "timeout": 30},
     },
     # 搜索类别段：回退链默认顺序（与 registry 注册顺序同源，可显式覆盖）
     "search": {
@@ -55,6 +57,7 @@ SECRET_KEYS = frozenset({
     "providers.anysearch.api_key", "providers.deepseek.api_key",
     "providers.firecrawl.api_key", "providers.jina_reader.api_key",
     "providers.mineru.api_key",
+    "providers.tavily.api_key", "providers.exa.api_key",
 })
 
 # 每个可设键的说明（config set 提示 / --help 用）
@@ -87,6 +90,10 @@ KEY_HINTS = {
     "providers.openalex.mailto": "OpenAlex 礼貌池邮箱（推荐填写，提升限流配额）",
     "providers.openalex.timeout": "openalex 请求超时秒数",
     "providers.arxiv.timeout": "arxiv 请求超时秒数",
+    "providers.tavily.api_key": "Tavily API Key（不配则自动走 keyless 免费模式）",
+    "providers.tavily.timeout": "tavily 请求超时秒数",
+    "providers.exa.api_key": "Exa API Key（https://dashboard.exa.ai）",
+    "providers.exa.timeout": "exa 请求超时秒数",
     "providers.crossref.timeout": "crossref 请求超时秒数",
     "providers.pdfinspector.timeout": "pdfinspector 本地解析超时秒数",
     "search.web.providers": "网页搜索回退链，逗号分隔：doubao,anysearch,deepseek",
