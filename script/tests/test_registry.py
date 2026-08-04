@@ -136,13 +136,12 @@ class TestLookups(unittest.TestCase):
         """类别公共参数（PUBLIC_PARAMS）自动并入，无归属 provider。"""
         params = category_params("search.web")
         self.assertIn("include_domains", params)
-        self.assertIn("exclude_domains", params)
 
     def test_category_params_order_is_registration_order(self):
         """provider 参数按注册顺序在前，公共参数追加在后。"""
         params = list(category_params("search.web"))
         self.assertEqual(params[:2], ["foo", "bar"])
-        self.assertEqual(params[2:], ["include_domains", "exclude_domains"])
+        self.assertEqual(params[2:], ["include_domains"])
 
     def test_search_categories_sorted(self):
         self.assertEqual(search_categories(), ["search.paper", "search.web"])

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import time
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
+from ..base import Provider, SearchResponse, SearchResult
 from ..errors import CATEGORY_HTTP, NoResultsError, ServiceError
 from ..http import http_post
 from ..registry import register
@@ -25,9 +25,6 @@ CONTENTS_URL = f"{API_BASE}/contents"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_MAX_RESULTS = 10
 API_MAX_RESULTS = 100
-
-_TYPES = ("instant", "fast", "auto", "deep-lite", "deep", "deep-reasoning")
-_CATEGORIES = ("company", "publication", "news", "personal site", "financial report", "people")
 
 
 def _api_key(cfg: dict) -> str | None:
@@ -59,16 +56,6 @@ def _split_domains(raw) -> list[str] | None:
     return [d.strip() for d in str(raw).split(",") if d.strip()] or None
 
 
-def _iso_date(raw: str | None) -> str | None:
-    """YYYY-MM-DD → ISO8601；已带时间直接透传。"""
-    if not raw:
-        return None
-    s = str(raw).strip()
-    if len(s) == 10 and s[4] == "-":
-        return s + "T00:00:00.000Z"
-    return s
-
-
 def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     api_key = _api_key(cfg)
 
@@ -86,24 +73,11 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     body: dict = {
         "query": query.strip(),
         "numResults": count,
-        "type": opts.get("type") or "auto",
+        "type": "auto",  # 精简：固定 auto 档（默认均衡）
     }
-    if opts.get("content_type"):
-        body["category"] = opts["content_type"]
     inc = _split_domains(opts.get("include_domains"))
-    exc = _split_domains(opts.get("exclude_domains"))
     if inc:
         body["includeDomains"] = inc
-    if exc:
-        body["excludeDomains"] = exc
-    ds = _iso_date(opts.get("date_start"))
-    de = _iso_date(opts.get("date_end"))
-    if ds:
-        body["startPublishedDate"] = ds
-    if de:
-        body["endPublishedDate"] = de
-    if opts.get("with_content"):  # 显式开全文（额外费用 $1/1k 页）
-        body["contents"] = {"text": {"maxCharacters": 2000}, "highlights": True}
 
     data = _post_json(SEARCH_URL, body, api_key, timeout)
 
@@ -137,28 +111,10 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 class ExaProvider(Provider):
     name = "exa"
     categories = frozenset({"search.web", "convert.page"})
-    category_params = {
-        "search.web": {
-            "type": ParamSpec(
-                choices=_TYPES,
-                help="延迟/深度档位：instant/fast/auto(默认)/deep-lite/deep/deep-reasoning",
-            ),
-            # 注意：不能叫 category——与 CLI 内部路由字段（set_defaults 的
-            # category="search.web"）冲突，会被参数归属校验误判为传参
-            "content_type": ParamSpec(
-                choices=_CATEGORIES, help="内容类别（Exa category）：company/publication/news/people 等"
-            ),
-            # include_domains / exclude_domains 是 search.web 类别公共参数
-            # （registry.PUBLIC_PARAMS），无需声明，直接读 opts
-            # 注意：不能叫 category——与 CLI 内部路由字段（set_defaults 的
-            # category="search.web"）冲突，会被参数归属校验误判为传参
-            "date_start": ParamSpec(metavar="YYYY-MM-DD", help="只返回此日期后发布的"),
-            "date_end": ParamSpec(metavar="YYYY-MM-DD", help="只返回此日期前发布的"),
-            "with_content": ParamSpec(
-                action="store_true", help="附带全文与 highlights（额外计费，$1/1k 页）"
-            ),
-        },
-    }
+    # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）：
+    # include_domains 是 search.web 类别公共参数（registry.PUBLIC_PARAMS），
+    # 直接读 opts，无需声明
+    category_params = {}
 
     def has_credentials(self, cfg: dict) -> bool:
         return bool(_api_key(cfg))

@@ -31,16 +31,11 @@ class TestCommandTree(unittest.TestCase):
         self.assertLessEqual({"web", "image", "paper", "data", "tags"}, set(ssubs))
 
     def test_web_params_include_core_and_new(self):
-        """核心参数 + provider 专属参数并入（不断言全集，加参数不挂）。"""
+        """核心参数 + 公共参数并入（不断言全集，加参数不挂）。"""
         web = _subparsers(self.subs["search"])["web"]
         args = _args(web)
         self.assertLessEqual({"query", "providers", "count", "timeout"}, args)
-        self.assertLessEqual(
-            {"include_domains", "exclude_domains", "search_depth",
-             "topic", "time_range", "type", "content_type",
-             "date_start", "date_end", "with_content"},
-            args,
-        )
+        self.assertIn("include_domains", args)
 
     def test_image_params_include_provider_specific(self):
         image = _subparsers(self.subs["search"])["image"]

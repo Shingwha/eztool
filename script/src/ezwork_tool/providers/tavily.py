@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import time
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
+from ..base import Provider, SearchResponse, SearchResult
 from ..errors import CATEGORY_HTTP, NoResultsError, ServiceError
 from ..http import http_post
 from ..registry import register
@@ -27,10 +27,6 @@ EXTRACT_URL = f"{API_BASE}/extract"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_MAX_RESULTS = 10
 API_MAX_RESULTS = 20
-
-_DEPTHS = ("basic", "advanced", "fast", "ultra-fast")
-_TOPICS = ("general", "news", "finance")
-_TIME_RANGES = ("day", "week", "month", "year")
 
 
 def _api_key(cfg: dict) -> str | None:
@@ -81,18 +77,11 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     body: dict = {
         "query": query.strip(),
         "max_results": count,
-        "search_depth": opts.get("search_depth") or "basic",
+        "search_depth": "basic",  # 精简：固定 basic（1 credit/次）
     }
-    if opts.get("topic"):
-        body["topic"] = opts["topic"]
-    if opts.get("time_range"):
-        body["time_range"] = opts["time_range"]
     inc = _split_domains(opts.get("include_domains"))
-    exc = _split_domains(opts.get("exclude_domains"))
     if inc:
         body["include_domains"] = inc
-    if exc:
-        body["exclude_domains"] = exc
 
     data = _post_json(SEARCH_URL, body, api_key, timeout)
 
@@ -120,18 +109,10 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 class TavilyProvider(Provider):
     name = "tavily"
     categories = frozenset({"search.web", "convert.page"})
-    category_params = {
-        "search.web": {
-            "search_depth": ParamSpec(
-                choices=_DEPTHS,
-                help="basic=1 credit / advanced=2 credits，fast/ultra-fast 低延迟",
-            ),
-            "topic": ParamSpec(choices=_TOPICS, help="general/news/finance"),
-            "time_range": ParamSpec(
-                choices=_TIME_RANGES, help="按发布时间过滤：day/week/month/year"
-            ),
-        },
-    }
+    # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）：
+    # include_domains 是 search.web 类别公共参数（registry.PUBLIC_PARAMS），
+    # 直接读 opts，无需声明
+    category_params = {}
 
     def has_credentials(self, cfg: dict) -> bool:
         return True  # keyless 兜底，永远可用
