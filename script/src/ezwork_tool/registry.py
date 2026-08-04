@@ -22,13 +22,8 @@ CATEGORIES: dict[str, list[str]] = {}
 # 类别级公共参数：多个 provider 语义一致的通用参数（如域名定向），
 # 提升为类别公共参数后无归属 provider——任何该类别 provider 都可从 opts 读取。
 # 类似全局 --count/--timeout，但限定类别。provider 不得再声明同名参数。
-PUBLIC_PARAMS: dict[str, dict[str, ParamSpec]] = {
-    "search.web": {
-        "include_domains": ParamSpec(
-            metavar="DOMAINS", help="只搜这些域名，逗号分隔，如 mp.weixin.qq.com"
-        ),
-    },
-}
+# 当前为空（参数面与既有 provider 保持一致）；需要时按需添加。
+PUBLIC_PARAMS: dict[str, dict[str, ParamSpec]] = {}
 
 # CLI 内部字段（subparser dest / set_defaults / 硬编码参数）：
 # provider 参数名与之冲突会覆盖路由与分派（如 --category 篡改路由类别、

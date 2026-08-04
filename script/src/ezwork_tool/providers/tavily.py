@@ -51,15 +51,6 @@ def _post_json(url: str, body: dict, api_key: str | None, timeout: float) -> dic
         raise ServiceError(f"tavily: invalid JSON response: {e}", CATEGORY_HTTP) from None
 
 
-def _split_domains(raw) -> list[str] | None:
-    """--include-domains 是逗号分隔字符串 → API 要数组。"""
-    if not raw:
-        return None
-    if isinstance(raw, list):
-        return [str(d).strip() for d in raw if str(d).strip()]
-    return [d.strip() for d in str(raw).split(",") if d.strip()] or None
-
-
 def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     api_key = _api_key(cfg)
 
@@ -79,9 +70,6 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
         "max_results": count,
         "search_depth": "basic",  # 精简：固定 basic（1 credit/次）
     }
-    inc = _split_domains(opts.get("include_domains"))
-    if inc:
-        body["include_domains"] = inc
 
     data = _post_json(SEARCH_URL, body, api_key, timeout)
 
@@ -109,9 +97,7 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 class TavilyProvider(Provider):
     name = "tavily"
     categories = frozenset({"search.web", "convert.page"})
-    # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）：
-    # include_domains 是 search.web 类别公共参数（registry.PUBLIC_PARAMS），
-    # 直接读 opts，无需声明
+    # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）
     category_params = {}
 
     def has_credentials(self, cfg: dict) -> bool:

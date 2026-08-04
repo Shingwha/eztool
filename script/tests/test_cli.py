@@ -30,12 +30,10 @@ class TestCommandTree(unittest.TestCase):
         ssubs = _subparsers(self.subs["search"])
         self.assertLessEqual({"web", "image", "paper", "data", "tags"}, set(ssubs))
 
-    def test_web_params_include_core_and_new(self):
-        """核心参数 + 公共参数并入（不断言全集，加参数不挂）。"""
+    def test_web_params(self):
+        """search web 只有全局参数（provider 无特有参数，与既有 provider 一致）。"""
         web = _subparsers(self.subs["search"])["web"]
-        args = _args(web)
-        self.assertLessEqual({"query", "providers", "count", "timeout"}, args)
-        self.assertIn("include_domains", args)
+        self.assertLessEqual({"query", "providers", "count", "timeout"}, _args(web))
 
     def test_image_params_include_provider_specific(self):
         image = _subparsers(self.subs["search"])["image"]

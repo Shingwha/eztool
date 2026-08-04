@@ -48,14 +48,6 @@ def _post_json(url: str, body: dict, api_key: str | None, timeout: float) -> dic
         raise ServiceError(f"exa: invalid JSON response: {e}", CATEGORY_HTTP) from None
 
 
-def _split_domains(raw) -> list[str] | None:
-    if not raw:
-        return None
-    if isinstance(raw, list):
-        return [str(d).strip() for d in raw if str(d).strip()]
-    return [d.strip() for d in str(raw).split(",") if d.strip()] or None
-
-
 def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
     api_key = _api_key(cfg)
 
@@ -75,9 +67,6 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
         "numResults": count,
         "type": "auto",  # 精简：固定 auto 档（默认均衡）
     }
-    inc = _split_domains(opts.get("include_domains"))
-    if inc:
-        body["includeDomains"] = inc
 
     data = _post_json(SEARCH_URL, body, api_key, timeout)
 
@@ -111,9 +100,7 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 class ExaProvider(Provider):
     name = "exa"
     categories = frozenset({"search.web", "convert.page"})
-    # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）：
-    # include_domains 是 search.web 类别公共参数（registry.PUBLIC_PARAMS），
-    # 直接读 opts，无需声明
+    # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）
     category_params = {}
 
     def has_credentials(self, cfg: dict) -> bool:

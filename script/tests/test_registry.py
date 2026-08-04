@@ -3,9 +3,11 @@
 import unittest
 
 from ezwork_tool.base import ParamSpec, Provider, ProviderOpts
+from ezwork_tool.api import _param_owners
 from ezwork_tool.errors import CATEGORY_INVALID, ServiceError
 from ezwork_tool.registry import (
     CATEGORIES,
+    PUBLIC_PARAMS,
     SERVICES,
     category_params,
     convert_file_services,
@@ -38,6 +40,7 @@ def _make(name, categories, params=None):
 class TestRegister(unittest.TestCase):
     def setUp(self):
         self._orig = {c: list(v) for c, v in CATEGORIES.items()}
+        self._orig_public = {c: dict(v) for c, v in PUBLIC_PARAMS.items()}
         CATEGORIES.clear()
 
     def tearDown(self):
@@ -46,6 +49,8 @@ class TestRegister(unittest.TestCase):
                 SERVICES.pop(name, None)
         CATEGORIES.clear()
         CATEGORIES.update(self._orig)
+        PUBLIC_PARAMS.clear()
+        PUBLIC_PARAMS.update(self._orig_public)
 
     def test_registers_into_categories_in_order(self):
         @register
@@ -86,7 +91,8 @@ class TestRegister(unittest.TestCase):
                            {"search.web": {"tag": ParamSpec()}}))
 
     def test_public_param_collision_rejected(self):
-        """provider 不得声明与类别公共参数同名的参数。"""
+        """provider 不得声明与类别公共参数同名的参数（注入公共参数验证）。"""
+        PUBLIC_PARAMS["search.web"] = {"include_domains": ParamSpec()}
         with self.assertRaises(ValueError):
             register(_make("reg_pp", {"search.web"},
                            {"search.web": {"include_domains": ParamSpec()}}))
@@ -107,6 +113,7 @@ class TestRegister(unittest.TestCase):
 class TestLookups(unittest.TestCase):
     def setUp(self):
         self._orig = {c: list(v) for c, v in CATEGORIES.items()}
+        self._orig_public = {c: dict(v) for c, v in PUBLIC_PARAMS.items()}
         CATEGORIES.clear()
         SERVICES["look_a"] = _make("look_a", {"search.web", "search.paper"},
                                    {"search.web": {"foo": ParamSpec()}})
@@ -118,6 +125,8 @@ class TestLookups(unittest.TestCase):
     def tearDown(self):
         CATEGORIES.clear()
         CATEGORIES.update(self._orig)
+        PUBLIC_PARAMS.clear()
+        PUBLIC_PARAMS.update(self._orig_public)
         SERVICES.pop("look_a", None)
         SERVICES.pop("look_b", None)
         SERVICES.pop("look_c", None)
@@ -134,14 +143,16 @@ class TestLookups(unittest.TestCase):
 
     def test_category_params_include_public(self):
         """类别公共参数（PUBLIC_PARAMS）自动并入，无归属 provider。"""
+        PUBLIC_PARAMS["search.web"] = {"include_domains": ParamSpec()}
         params = category_params("search.web")
         self.assertIn("include_domains", params)
+        self.assertNotIn("include_domains", _param_owners("search.web"))
 
     def test_category_params_order_is_registration_order(self):
         """provider 参数按注册顺序在前，公共参数追加在后。"""
         params = list(category_params("search.web"))
         self.assertEqual(params[:2], ["foo", "bar"])
-        self.assertEqual(params[2:], ["include_domains"])
+        self.assertEqual(params[2:], [])  # 当前无公共参数
 
     def test_search_categories_sorted(self):
         self.assertEqual(search_categories(), ["search.paper", "search.web"])
