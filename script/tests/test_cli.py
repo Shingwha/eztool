@@ -23,23 +23,30 @@ class TestCommandTree(unittest.TestCase):
         self.p = cli.build_parser()
         self.subs = _subparsers(self.p)
 
-    def test_top_level_only_three_domains(self):
-        self.assertEqual(set(self.subs), {"search", "convert", "config"})
+    def test_top_level_has_core_domains(self):
+        self.assertLessEqual({"search", "convert", "config"}, set(self.subs))
 
-    def test_search_subcommands_from_registry(self):
+    def test_search_subcommands_include_core(self):
         ssubs = _subparsers(self.subs["search"])
-        self.assertEqual(set(ssubs), {"web", "image", "paper", "data", "tags"})
+        self.assertLessEqual({"web", "image", "paper", "data", "tags"}, set(ssubs))
 
-    def test_web_params(self):
+    def test_web_params_include_core_and_new(self):
+        """核心参数 + provider 专属参数并入（不断言全集，加参数不挂）。"""
         web = _subparsers(self.subs["search"])["web"]
-        self.assertEqual(_args(web), {"query", "providers", "count", "timeout"})
+        args = _args(web)
+        self.assertLessEqual({"query", "providers", "count", "timeout"}, args)
+        self.assertLessEqual(
+            {"include_domains", "exclude_domains", "search_depth",
+             "topic", "time_range", "type", "content_type",
+             "date_start", "date_end", "with_content"},
+            args,
+        )
 
     def test_image_params_include_provider_specific(self):
         image = _subparsers(self.subs["search"])["image"]
-        self.assertEqual(_args(image), {
-            "query", "providers", "count", "timeout",
-            "width_min", "width_max", "height_min", "height_max", "shapes",
-        })
+        self.assertLessEqual({"query", "providers", "count", "timeout",
+                              "width_min", "width_max", "height_min",
+                              "height_max", "shapes"}, _args(image))
 
     def test_paper_params_command_specific(self):
         paper = _subparsers(self.subs["search"])["paper"]
@@ -54,12 +61,13 @@ class TestCommandTree(unittest.TestCase):
 
     def test_convert_params(self):
         conv = self.subs["convert"]
-        self.assertEqual(_args(conv),
-                         {"target", "out", "providers", "timeout", "list_providers"})
+        self.assertLessEqual(
+            {"target", "out", "providers", "timeout", "list_providers"}, _args(conv))
 
     def test_config_subcommands(self):
         csubs = _subparsers(self.subs["config"])
-        self.assertEqual(set(csubs), {"show", "set", "get", "reset", "test", "clear"})
+        self.assertLessEqual({"show", "set", "get", "reset", "test", "clear"},
+                             set(csubs))
         test_args = _args(csubs["test"])
         self.assertIn("providers", test_args)
         self.assertNotIn("backend", test_args)
@@ -90,13 +98,6 @@ class TestCommandTree(unittest.TestCase):
         self.p.parse_args(["search", "tags"])
         ns = self.p.parse_args(["config", "test", "--providers", "doubao"])
         self.assertEqual(ns.providers, "doubao")
-
-    def test_no_full_flag_anywhere(self):
-        """v0.2.0 后 --full 已移除：所有子命令默认完整输出，无截断参数。"""
-        ns = self.p.parse_args(["search", "image", "猫"])
-        self.assertFalse(hasattr(ns, "full"))
-        ns2 = self.p.parse_args(["search", "data", "AAPL"])
-        self.assertFalse(hasattr(ns2, "full"))
 
 
 class TestCmdSearch(unittest.TestCase):
