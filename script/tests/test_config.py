@@ -55,7 +55,7 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(cfg["convert"]["page"]["providers"],
                          ["markdown_new", "jina_reader", "firecrawl"])
         self.assertEqual(cfg["convert"]["file"]["providers"],
-                         ["pdfinspector", "markdown_new", "mineru"])
+                         ["anydoc", "markdown_new", "mineru"])
         self.assertEqual(cfg["providers"]["deepseek"]["thinking"], "enabled")
         self.assertEqual(cfg["providers"]["mineru"]["timeout"], 300)
         self.assertEqual(cfg["providers"]["markdown_new"]["timeout"], 30)

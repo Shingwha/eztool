@@ -6,12 +6,11 @@ readme = {text = "ezwork-tool: unified search / convert / config CLI (see repo r
 requires-python = ">=3.10"
 dependencies = []
 
-# 可选依赖：本地 PDF 解析（Firecrawl pdf-inspector，Rust 核心，无 OCR）。
-# Windows/macOS/glibc-Linux 有官方轮子：uv tool install ".[local]"
-# musl（Alpine 等）无 musllinux 轮子，源码构建需 Rust 工具链 —— 不装 extra 即可，
-# eztool 的 pdfinspector provider 会自动检测缺失并在 convert 回退链中跳过。
+# 可选依赖：本地文档解析（Firecrawl anydoc，Rust 核心，14 格式，无 OCR）。
+# Windows/macOS/glibc/musl 均有官方轮子：uv tool install ".[local]"
+# 不装 extra 也可——anydoc provider 会自动检测缺失并跳过（纯文本/HTML 等不需该库）。
 [project.optional-dependencies]
-local = ["pdf-inspector>=0.2.6"]
+local = ["firecrawl-anydoc>=0.1.3"]
 
 [project.scripts]
 eztool = "ezwork_tool.cli:main"

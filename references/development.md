@@ -19,7 +19,7 @@ ezwork-tool/
 
 ```bash
 cd ezwork-tool/script
-uv tool install ".[local]"    # [local] 额外装 pdf-inspector（本地 PDF 解析）
+uv tool install ".[local]"    # [local] 额外装 firecrawl-anydoc（本地文档解析，14 格式）
 eztool --version
 ```
 
@@ -38,7 +38,7 @@ cd ezwork-tool && git pull          # 失败先加仓库代理：git config http
 cd script
 uv cache clean ezwork-tool && uv tool install ".[local]" --force --reinstall
 # 注意：直接 --force 会复用旧 wheel 缓存装成旧代码，必须先 uv cache clean
-# 注意：必须带 [local] extra，否则 pdf-inspector 丢失（uv tool install 没有 --extra 参数）
+# 注意：必须带 [local] extra，否则 firecrawl-anydoc 丢失（uv tool install 没有 --extra 参数）
 eztool --help                       # 验证新命令
 ```
 

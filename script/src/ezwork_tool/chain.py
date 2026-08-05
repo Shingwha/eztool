@@ -137,7 +137,7 @@ def convert_chain(
     opts: ProviderOpts,
     log: LogFn = _stderr,
 ) -> Optional[FetchResult]:
-    """Local file → Markdown chain（convert.file：pdfinspector → markdown_new → mineru）。"""
+    """Local file → Markdown chain（convert.file：anydoc → markdown_new → mineru）。"""
     result = run_chain(
         providers, "convert.file",
         lambda svc: svc.convert_file(path, timeout=svc.timeout(60)),

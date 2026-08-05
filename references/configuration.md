@@ -27,7 +27,7 @@
 | `openalex` / `arxiv` / `crossref` | 无 | 全免费免凭证（OpenAlex 可选配 `providers.openalex.mailto` 进礼貌池） |
 | `markdown_new` / `jina_reader` / `firecrawl` | 无 | URL 抓取全免费免 Token；firecrawl/jina 配 key 提高限速 |
 | `mineru` | 无 | 走 v1 轻量（≤10MB/20 页）；配 `providers.mineru.api_key` 自动升级 v4 Precision API |
-| `pdfinspector` | 无 | 本地 PDF 解析（需 `pip install pdf-inspector`，见安装说明）；未安装自动跳过 |
+| `anydoc` | 无 | 本地文档解析（需 `pip install firecrawl-anydoc`，见安装说明）；未安装自动跳过（纯文本/HTML 不需库） |
 
 ## 全部配置项
 
@@ -60,7 +60,7 @@
 | `providers.markdown_new.timeout` | 30 | markdown.new 超时（秒） |
 | `providers.mineru.api_key` | 空 | MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML），不配走 v1 轻量（≤10MB/20页） |
 | `providers.mineru.timeout` | 300 | MinerU 提取任务总超时（秒，提交+轮询+下载） |
-| `providers.pdfinspector.timeout` | 60 | pdfinspector 本地解析超时（秒） |
+| `providers.anydoc.timeout` | 60 | anydoc 本地解析超时（秒） |
 
 ### 类别段（回退链 / 缺省超时）
 
@@ -76,7 +76,7 @@
 | `search.data.timeout` | 30 | 专业数据源默认超时（秒） |
 | `convert.page.providers` | `markdown_new,jina_reader,firecrawl` | URL → Markdown 抓取链（免费优先，按序尝试） |
 | `convert.page.timeout` | 30 | URL 抓取默认超时（秒） |
-| `convert.file.providers` | `pdfinspector,markdown_new,mineru` | 文件 → Markdown 转换链（本地解析优先；MinerU 支持 PPTX/老格式图片等，异步轮询较慢） |
+| `convert.file.providers` | `anydoc,markdown_new,mineru` | 文件 → Markdown 转换链（本地解析优先；MinerU 支持扫描 PDF/图片 OCR，异步轮询较慢） |
 | `convert.file.timeout` | 60 | 文件转换默认超时（秒） |
 
 > 类别段 `providers` 缺省 = 该类别的注册顺序（registry），显式配置则覆盖。`config set` / `reset` / `get` / `show` 对以上全部键生效，键名自动展开，无需记忆清单（`eztool config show` 输出全部）。

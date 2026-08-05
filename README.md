@@ -13,7 +13,7 @@ eztool search paper "LLM reasoning" --year 2024 --sort cited --oa
 eztool search data "AAPL" --tag finance.quote    # 专业数据源（anysearch）
 eztool search tags                               # 数据源标签目录（40+）
 eztool convert https://example.com/article       # URL → Markdown（markdown_new→jina_reader→firecrawl）
-eztool convert report.pdf --out report.md        # 本地文件 → Markdown（pdfinspector→markdown_new→mineru）
+eztool convert report.pdf --out report.md        # 本地文件 → Markdown（anydoc→markdown_new→mineru）
 eztool config test                               # 验证凭证
 ```
 
@@ -31,7 +31,7 @@ eztool config test                               # 验证凭证
 
 ```bash
 cd script && uv tool install .                     # 基础安装
-uv tool install ".[local]"                          # 可选：本地 PDF 解析（pdf-inspector）
+uv tool install ".[local]"                          # 可选：本地文档解析（firecrawl-anydoc，14 格式）
 eztool --help
 ```
 

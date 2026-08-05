@@ -133,7 +133,7 @@ class TestCmdConvert(unittest.TestCase):
         with mock.patch.object(api, "list_category_providers") as lp, \
              mock.patch("sys.stdout", new_callable=io.StringIO) as buf:
             lp.side_effect = lambda c: {"convert.page": ["markdown_new"],
-                                        "convert.file": ["pdfinspector"]}[c]
+                                        "convert.file": ["anydoc"]}[c]
             args = argparse.Namespace(list_providers=True, target=None,
                                       out=None, timeout=None, providers=None)
             cli.cmd_convert(args)
@@ -141,7 +141,7 @@ class TestCmdConvert(unittest.TestCase):
             self.assertIn("convert.page", out)
             self.assertIn("convert.file", out)
             self.assertIn("markdown_new", out)
-            self.assertIn("pdfinspector", out)
+            self.assertIn("anydoc", out)
 
     def test_missing_target_is_usage_error(self):
         from ezwork_tool.errors import UsageError

@@ -18,7 +18,7 @@
 | `jina_reader` | | | | | ✅ | | — |
 | `firecrawl` | | | | | ✅ | | — |
 | `mineru` | | | | | ✅ | ✅ | — |
-| `pdfinspector` | | | | | | ✅ | —（本地 PDF 解析，无凭证） |
+| `anydoc` | | | | | | ✅ | —（本地文档解析，无凭证；14 格式 + 纯文本/HTML） |
 
 > v0.2.0 起 provider 名 `markdown` / `jina` 更名为 `markdown_new` / `jina_reader`（与模块名对齐，破坏性变更）。
 
@@ -31,7 +31,7 @@
 | `search.paper` | `search paper` | openalex + arxiv + crossref（**并行**汇总） | 无 | 论文卡片 |
 | `search.data` | `search data` | anysearch | 可选（匿名可用） | 数据源结果 + 来源标注 |
 | `convert.page` | `convert <url>` | markdown_new → jina_reader → firecrawl | 无 | 网页全文 Markdown |
-| `convert.file` | `convert <file>` | pdfinspector → markdown_new → mineru | 无（mineru v4 可选） | 文件内容 Markdown |
+| `convert.file` | `convert <file>` | anydoc → markdown_new → mineru | 无（mineru v4 可选） | 文件内容 Markdown |
 
 ## 回退链规则
 

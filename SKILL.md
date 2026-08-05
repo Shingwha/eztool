@@ -75,7 +75,7 @@ anysearch，40+ 标签定向数据源（学术/代码/金融/CVE/法律/旅行�
 
 ### `eztool convert <url|文件>` — 一切 → Markdown（自动识别输入类型）
 - `http(s)://...` → 在线抓取链：markdown_new → jina_reader → firecrawl
-- 本地路径 → 本地解析链：pdfinspector → markdown_new → mineru（本地路径不存在报用法错误）
+- 本地路径 → 本地解析链：anydoc → markdown_new → mineru（本地路径不存在报用法错误）
 
 | 参数 | 说明 |
 |---|---|
@@ -93,7 +93,7 @@ anysearch，40+ 标签定向数据源（学术/代码/金融/CVE/法律/旅行�
 
 ```bash
 cd ezwork-tool/script && uv tool install .        # 基础安装
-uv tool install ".[local]"                          # 可选：本地 PDF 解析（pdf-inspector）
+uv tool install ".[local]"                          # 可选：本地文档解析（firecrawl-anydoc，14 格式）
 eztool --version
 ```
 
