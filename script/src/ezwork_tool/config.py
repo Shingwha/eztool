@@ -47,7 +47,7 @@ DEFAULTS: dict[str, Any] = {
     },
     # 转换类别段：page=URL 抓取（免费优先），file=本地文件（本地解析优先）
     "convert": {
-        "page": {"providers": ["markdown_new", "jina_reader", "firecrawl"], "timeout": 30},
+        "page": {"providers": ["markdown_new", "jina_reader", "anysearch", "firecrawl"], "timeout": 30},
         "file": {"providers": ["anydoc", "markdown_new", "mineru"], "timeout": 60},
     },
 }
@@ -104,7 +104,7 @@ KEY_HINTS = {
     "search.paper.timeout": "论文搜索默认超时秒数",
     "search.data.providers": "专业数据源回退链，逗号分隔：anysearch",
     "search.data.timeout": "专业数据源搜索默认超时秒数",
-    "convert.page.providers": "URL → Markdown 抓取链，逗号分隔（免费优先）：markdown_new,jina_reader,firecrawl",
+    "convert.page.providers": "URL → Markdown 抓取链，逗号分隔（免费优先）：markdown_new,jina_reader,anysearch,firecrawl",
     "convert.page.timeout": "URL 抓取默认超时秒数",
     "convert.file.providers": "文件 → Markdown 转换链，逗号分隔（本地解析优先）：anydoc,markdown_new,mineru",
     "convert.file.timeout": "文件转换默认超时秒数",

@@ -12,7 +12,7 @@ eztool search paper "vision transformer"         # 论文搜索：openalex+arxiv
 eztool search paper "LLM reasoning" --year 2024 --sort cited --oa
 eztool search data "AAPL" --tag finance.quote    # 专业数据源（anysearch）
 eztool search tags                               # 数据源标签目录（40+）
-eztool convert https://example.com/article       # URL → Markdown（markdown_new→jina_reader→firecrawl）
+eztool convert https://example.com/article       # URL → Markdown（markdown_new→jina_reader→anysearch→firecrawl）
 eztool convert report.pdf --out report.md        # 本地文件 → Markdown（anydoc→markdown_new→mineru）
 eztool config test                               # 验证凭证
 ```

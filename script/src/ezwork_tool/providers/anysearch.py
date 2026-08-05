@@ -1,7 +1,13 @@
-"""AnySearch 搜索后端（移植自 anysearch-cli/core.py）。
+"""AnySearch 后端（搜索 + URL 提取）。
 
-调用 AnySearch REST API（POST /v1/search），支持匿名（无 API Key）与
-Bearer Token 鉴权，支持 tag 参数定向数据源。纯标准库实现。
+- 搜索：AnySearch REST API（POST /v1/search），支持匿名（无 API Key）与
+  Bearer Token 鉴权，支持 tag 参数定向数据源。
+- URL 提取（convert.page）：MCP JSON-RPC 通道（POST /mcp 的 tools/call，
+  ``extract`` 工具），匿名可用；限制：仅 HTML（PDF/二进制报错）、内容
+  50,000 字符截断、服务端 30s 超时——故放在 convert.page 链中间位，
+  firecrawl 兜底全文。
+
+纯标准库实现。
 """
 
 from __future__ import annotations
@@ -12,8 +18,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
+from ..base import FetchResult, ParamSpec, Provider, SearchResponse, SearchResult
 from ..errors import (
+    CATEGORY_EMPTY,
     CATEGORY_HTTP,
     CATEGORY_INVALID,
     CATEGORY_NETWORK,
@@ -22,11 +29,13 @@ from ..errors import (
     ServiceError,
     UsageError,
 )
+from ..http import http_post
 from ..registry import register
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
 
 DEFAULT_BASE_URL = "https://api.anysearch.com"
+MCP_ENDPOINT = "https://api.anysearch.com/mcp"  # MCP JSON-RPC 通道（extract 等工具）
 DEFAULT_MAX_RESULTS = 10
 API_MAX_RESULTS = 20  # API 上限
 DEFAULT_TIMEOUT = 60.0
@@ -218,6 +227,48 @@ def _call_api(
     return data
 
 
+# ── MCP 工具调用（extract / batch_search 等，与 REST 并列的官方通道）──────────
+
+
+def _mcp_call(
+    tool_name: str,
+    arguments: dict[str, Any],
+    api_key: str | None = None,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    """调用 AnySearch MCP 工具（JSON-RPC 2.0，POST /mcp）。
+
+    返回 result dict（含 ``content`` 列表，text 项即 Markdown/JSON 字符串）。
+    http_post 已把网络/HTTP 错误映射为 ServiceError；JSON-RPC ``error``
+    字段在此转为 ServiceError（code 保留服务端语义，如 extract_fetch_failed）。
+
+    Raises:
+        ServiceError: 网络 / HTTP / 响应解析失败 / JSON-RPC error。
+    """
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": arguments},
+    }).encode("utf-8")
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    _, _, body = http_post(MCP_ENDPOINT, headers, payload, int(timeout))
+    try:
+        data = json.loads(body.decode("utf-8", "replace"))
+    except ValueError as e:
+        raise ServiceError(
+            f"anysearch MCP: invalid JSON response: {e}", CATEGORY_HTTP
+        ) from e
+    if not isinstance(data, dict) or data.get("error"):
+        err = (data or {}).get("error") or {}
+        msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+        raise ServiceError(f"anysearch MCP error: {msg}", CATEGORY_HTTP)
+    return data.get("result") or {}
+
+
 # ── 公开搜索入口 ──────────────────────────────────────────────────────────────
 
 
@@ -310,10 +361,10 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 
 @register
 class AnySearchProvider(Provider):
-    """anysearch 搜索后端（匿名可用；tag 定向数据源）。"""
+    """anysearch 后端：搜索（匿名可用；tag 定向数据源）+ URL 提取（MCP extract）。"""
 
     name = "anysearch"
-    categories = frozenset({"search.web", "search.data"})
+    categories = frozenset({"search.web", "search.data", "convert.page"})
     category_params = {
         "search.data": {
             "tag": ParamSpec(metavar="TAG", help="数据源标签（见 eztool search tags）"),
@@ -332,3 +383,32 @@ class AnySearchProvider(Provider):
 
     def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
         return _search(cfg, query, opts)
+
+    def build_headers(self) -> dict:
+        """MCP 通道头：JSON-RPC 需 Content-Type；api_key 可选（匿名可用）。"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def fetch(self, url: str, timeout: int = 30) -> FetchResult:
+        """URL → Markdown（AnySearch MCP ``extract`` 工具）。
+
+        限制：仅 HTML 页面（PDF/二进制报错）；内容 50,000 字符截断；服务端
+        30s 超时。故只作 convert.page 链的中间位，firecrawl 兜底全文。
+        """
+        t0 = time.monotonic()
+        result = _mcp_call("extract", {"url": url}, self.api_key, timeout)
+        md = ""
+        for item in result.get("content") or []:
+            if isinstance(item, dict) and item.get("type") == "text":
+                md = str(item.get("text", "")).strip()
+                break
+        if not md:
+            raise ServiceError(
+                f"{self.name} returned empty content", CATEGORY_EMPTY
+            )
+        return FetchResult(
+            provider=self.name, content=md, url=url,
+            elapsed=round(time.monotonic() - t0, 3),
+        )

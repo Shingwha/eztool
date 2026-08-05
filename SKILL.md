@@ -74,7 +74,7 @@ anysearch，40+ 标签定向数据源（学术/代码/金融/CVE/法律/旅行�
 ### `eztool search tags` — 列出全部数据源标签（无参数）
 
 ### `eztool convert <url|文件>` — 一切 → Markdown（自动识别输入类型）
-- `http(s)://...` → 在线抓取链：markdown_new → jina_reader → firecrawl
+- `http(s)://...` → 在线抓取链：markdown_new → jina_reader → anysearch → firecrawl
 - 本地路径 → 本地解析链：anydoc → markdown_new → mineru（本地路径不存在报用法错误）
 
 | 参数 | 说明 |

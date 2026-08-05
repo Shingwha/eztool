@@ -53,7 +53,7 @@ class TestLoadConfig(unittest.TestCase):
                          ["openalex", "arxiv", "crossref"])
         self.assertEqual(cfg["search"]["data"]["providers"], ["anysearch"])
         self.assertEqual(cfg["convert"]["page"]["providers"],
-                         ["markdown_new", "jina_reader", "firecrawl"])
+                         ["markdown_new", "jina_reader", "anysearch", "firecrawl"])
         self.assertEqual(cfg["convert"]["file"]["providers"],
                          ["anydoc", "markdown_new", "mineru"])
         self.assertEqual(cfg["providers"]["deepseek"]["thinking"], "enabled")

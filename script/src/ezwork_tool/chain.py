@@ -119,7 +119,7 @@ def fetch_chain(
     opts: ProviderOpts,
     log: LogFn = _stderr,
 ) -> Optional[FetchResult]:
-    """URL → Markdown 链（convert.page：markdown_new → jina_reader → firecrawl）。
+    """URL → Markdown 链（convert.page：markdown_new → jina_reader → anysearch → firecrawl）。
 
     返回 FetchResult 或 None（保持历史签名；FetchResult.provider 含服务商名）。
     """

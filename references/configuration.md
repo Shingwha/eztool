@@ -25,7 +25,7 @@
 | `anysearch` | 无 | 可用（匿名模式，按 IP 限速）；配 `providers.anysearch.api_key` 可提高配额 |
 | `deepseek` | `providers.deepseek.api_key` | `search web` 回退链跳过 deepseek |
 | `openalex` / `arxiv` / `crossref` | 无 | 全免费免凭证（OpenAlex 可选配 `providers.openalex.mailto` 进礼貌池） |
-| `markdown_new` / `jina_reader` / `firecrawl` | 无 | URL 抓取全免费免 Token；firecrawl/jina 配 key 提高限速 |
+| `markdown_new` / `jina_reader` / `anysearch` / `firecrawl` | 无 | URL 抓取全免费免 Token；firecrawl/jina/anysearch 配 key 提高限速；anysearch 仅 HTML、50K 截断（firecrawl 兜底全文） |
 | `mineru` | 无 | 走 v1 轻量（≤10MB/20 页）；配 `providers.mineru.api_key` 自动升级 v4 Precision API |
 | `anydoc` | 无 | 本地文档解析（需 `pip install firecrawl-anydoc`，见安装说明）；未安装自动跳过（纯文本/HTML 不需库） |
 
@@ -74,7 +74,7 @@
 | `search.paper.timeout` | 30 | 论文搜索默认超时（秒） |
 | `search.data.providers` | `anysearch` | 专业数据源回退链 |
 | `search.data.timeout` | 30 | 专业数据源默认超时（秒） |
-| `convert.page.providers` | `markdown_new,jina_reader,firecrawl` | URL → Markdown 抓取链（免费优先，按序尝试） |
+| `convert.page.providers` | `markdown_new,jina_reader,anysearch,firecrawl` | URL → Markdown 抓取链（免费优先，按序尝试） |
 | `convert.page.timeout` | 30 | URL 抓取默认超时（秒） |
 | `convert.file.providers` | `anydoc,markdown_new,mineru` | 文件 → Markdown 转换链（本地解析优先；MinerU 支持扫描 PDF/图片 OCR，异步轮询较慢） |
 | `convert.file.timeout` | 60 | 文件转换默认超时（秒） |

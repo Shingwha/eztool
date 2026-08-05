@@ -9,7 +9,7 @@
 | provider | search.web | search.image | search.paper | search.data | convert.page | convert.file | category_params |
 |---|---|---|---|---|---|---|---|
 | `doubao` | ✅ | ✅ | | | | | image: width_min/width_max/height_min/height_max/shapes |
-| `anysearch` | ✅ | | | ✅ | | | data: tag / params |
+| `anysearch` | ✅ | | | ✅ | ✅ | | data: tag / params |
 | `deepseek` | ✅ | | | | | | — |
 | `openalex` | | | ✅ | | | | —（year/author/sort/oa 是 paper 命令专属参数） |
 | `arxiv` | | | ✅ | | | | — |
@@ -30,7 +30,7 @@
 | `search.image` | `search image` | doubao | 需要 | 图片直链 + 尺寸/形状 |
 | `search.paper` | `search paper` | openalex + arxiv + crossref（**并行**汇总） | 无 | 论文卡片 |
 | `search.data` | `search data` | anysearch | 可选（匿名可用） | 数据源结果 + 来源标注 |
-| `convert.page` | `convert <url>` | markdown_new → jina_reader → firecrawl | 无 | 网页全文 Markdown |
+| `convert.page` | `convert <url>` | markdown_new → jina_reader → anysearch → firecrawl | 无（anysearch key 可选） | 网页全文 Markdown |
 | `convert.file` | `convert <file>` | anydoc → markdown_new → mineru | 无（mineru v4 可选） | 文件内容 Markdown |
 
 ## 回退链规则

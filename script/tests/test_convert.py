@@ -11,6 +11,7 @@ from unittest import mock
 from ezwork_tool import chain as chainmod
 from ezwork_tool import base as pmod
 from ezwork_tool.api import convert
+from ezwork_tool.providers.anysearch import AnySearchProvider
 from ezwork_tool.providers.markdown_new import (
     SUPPORTED_EXTENSIONS,
     MarkdownNewProvider,
@@ -254,6 +255,79 @@ class TestConvertEntry(unittest.TestCase):
         self.assertEqual(result.provider, "jina_reader")
         names = run_chain.call_args[0][0]
         self.assertEqual(names, ["jina_reader"])
+
+
+def _mcp_response(payload: dict) -> tuple:
+    """MCP 成功响应三元组（http_post 返回形态）。"""
+    return (200, {}, json.dumps(payload).encode("utf-8"))
+
+
+class TestAnysearchExtract(unittest.TestCase):
+    """AnySearch MCP extract（convert.page）测试。"""
+
+    def setUp(self):
+        self.provider = AnySearchProvider()
+
+    @mock.patch("ezwork_tool.providers.anysearch.http_post")
+    def test_success_parses_mcp_text_content(self, http_post):
+        http_post.return_value = _mcp_response({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"content": [
+                {"type": "text", "text": "## Example Domain\n\nbody"},
+            ]},
+        })
+        result = self.provider.fetch("https://example.com", timeout=30)
+        self.assertEqual(result.content, "## Example Domain\n\nbody")
+        self.assertEqual(result.provider, "anysearch")
+        self.assertEqual(result.url, "https://example.com")
+        # payload 结构：JSON-RPC tools/call → extract 工具
+        url, headers, payload, timeout = http_post.call_args[0]
+        self.assertEqual(url, "https://api.anysearch.com/mcp")
+        body = json.loads(payload)
+        self.assertEqual(body["method"], "tools/call")
+        self.assertEqual(body["params"]["name"], "extract")
+        self.assertEqual(body["params"]["arguments"]["url"], "https://example.com")
+        self.assertEqual(headers["Content-Type"], "application/json")
+
+    @mock.patch("ezwork_tool.providers.anysearch.http_post")
+    def test_jsonrpc_error_maps_to_http_category(self, http_post):
+        http_post.return_value = _mcp_response({
+            "jsonrpc": "2.0", "id": 1,
+            "error": {"code": -32000, "message": "extract fetch failed"},
+        })
+        with self.assertRaises(pmod.ServiceError) as ctx:
+            self.provider.fetch("https://example.com")
+        self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
+        self.assertIn("extract fetch failed", str(ctx.exception))
+
+    @mock.patch("ezwork_tool.providers.anysearch.http_post")
+    def test_empty_content_is_empty_category(self, http_post):
+        http_post.return_value = _mcp_response({
+            "jsonrpc": "2.0", "id": 1, "result": {"content": []},
+        })
+        with self.assertRaises(pmod.ServiceError) as ctx:
+            self.provider.fetch("https://example.com")
+        self.assertEqual(ctx.exception.category, pmod.CATEGORY_EMPTY)
+
+    @mock.patch("ezwork_tool.providers.anysearch.http_post")
+    def test_invalid_json_response_is_http_category(self, http_post):
+        http_post.return_value = (200, {}, b"<html>not json</html>")
+        with self.assertRaises(pmod.ServiceError) as ctx:
+            self.provider.fetch("https://example.com")
+        self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
+
+    @mock.patch("ezwork_tool.providers.anysearch.http_post")
+    def test_api_key_sets_authorization(self, http_post):
+        http_post.return_value = _mcp_response({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"content": [{"type": "text", "text": "ok"}]},
+        })
+        provider = AnySearchProvider(
+            pmod.ProviderOpts(api_keys={"anysearch": "as_sk_test"})
+        )
+        provider.fetch("https://example.com")
+        headers = http_post.call_args[0][1]
+        self.assertEqual(headers["Authorization"], "Bearer as_sk_test")
 
 
 if __name__ == "__main__":
