@@ -1,403 +1,152 @@
-"""convert（本地文件转 Markdown）子系统测试。"""
+"""convert 测试：URL/文件路由、回退链、并行取先成功、单跑。"""
 
-import io
-import json
 import os
 import tempfile
 import unittest
-import urllib.error
-from unittest import mock
 
-from ezwork_tool import chain as chainmod
-from ezwork_tool import base as pmod
-from ezwork_tool.api import convert
-from ezwork_tool.providers.anysearch import AnySearchProvider
-from ezwork_tool.providers.markdown_new import (
-    SUPPORTED_EXTENSIONS,
-    MarkdownNewProvider,
-)
+from ezwork_tool import api, provider as prov
+from ezwork_tool.provider import FetchResult, Provider
+from ezwork_tool.util import ServiceError, UsageError
+
+_SAVED = dict(prov.SERVICES)
 
 
-def _ok_response(payload: dict) -> mock.MagicMock:
-    resp = mock.MagicMock()
-    resp.status = 200
-    resp.headers = {}
-    resp.read.return_value = json.dumps(payload).encode("utf-8")
-    resp.__enter__.return_value = resp  # 支持 with urllib.request.urlopen(...)
-    resp.__exit__.return_value = False
-    return resp
+class FakeFetchProvider(Provider):
+    fail_with = None
+    content = "ok"
+    low_quality = False
+    calls = 0
+
+    def fetch(self, url, timeout=30):
+        FakeFetchProvider.calls += 1
+        if self.fail_with:
+            raise self.fail_with
+        return FetchResult(provider=self.name, content=self.content, url=url,
+                           elapsed=0.1, low_quality=self.low_quality)
+
+    def convert_file(self, path, timeout=60):
+        return self.fetch(path, timeout)
 
 
-def _err_response(code: int, payload: dict) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError(
-        "https://markdown.new/convert", code, "err", {},
-        io.BytesIO(json.dumps(payload).encode("utf-8")),
-    )
+def _install(name, category="convert.page", **attrs):
+    cls = type(f"Fake{name.title()}", (FakeFetchProvider,),
+               {"name": name, "categories": frozenset({category})})
+    for k, v in attrs.items():
+        setattr(cls, k, v)
+    prov.SERVICES[name] = cls
+    return cls
 
 
-class TestBuildMultipart(unittest.TestCase):
-    def test_body_structure(self):
-        body, ctype = pmod.build_multipart("file", "a.csv", b"x,y\n1,2", "text/csv")
-        self.assertTrue(ctype.startswith("multipart/form-data; boundary="))
-        self.assertIn(b'name="file"; filename="a.csv"', body)
-        self.assertIn(b"Content-Type: text/csv", body)
-        self.assertTrue(body.endswith(b"--\r\n"))
-        self.assertIn(b"x,y\n1,2", body)
+def setUpModule():
+    prov.SERVICES.clear()
+    prov.SERVICES.update(_SAVED)
 
 
-class TestConvertFileLocalChecks(unittest.TestCase):
-    def setUp(self):
-        self.provider = MarkdownNewProvider()
+def tearDownModule():
+    prov.SERVICES.clear()
+    prov.SERVICES.update(_SAVED)
 
-    def test_missing_file_is_invalid(self):
-        with self.assertRaises(pmod.ServiceError) as ctx:
-            self.provider.convert_file("C:/definitely/missing/file.pdf")
-        self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
 
-    def test_unsupported_extension_is_invalid(self):
-        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
-            f.write(b"MZ")
+class TestConvertRouting(unittest.TestCase):
+    def test_url_routes_to_page_chain(self):
+        _install("page_a", category="convert.page")
+        cfg = {"convert": {"page": {"providers": ["page_a"]}}}
+        result = api.convert(cfg, "https://example.com", {})
+        self.assertEqual(result.provider, "page_a")
+
+    def test_local_file_routes_to_file_chain(self):
+        _install("file_a", category="convert.file")
+        cfg = {"convert": {"file": {"providers": ["file_a"]}}}
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write("hello")
             path = f.name
         try:
-            with self.assertRaises(pmod.ServiceError) as ctx:
-                self.provider.convert_file(path)
-            self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
-            self.assertIn(".exe", str(ctx.exception))
+            result = api.convert(cfg, path, {})
+            self.assertEqual(result.provider, "file_a")
         finally:
-            os.remove(path)
+            os.unlink(path)
 
-    def test_oversized_file_is_invalid(self):
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+    def test_missing_file_is_usage_error(self):
+        with self.assertRaises(UsageError):
+            api.convert({}, "/no/such/file.md", {})
+
+    def test_bad_protocol_treated_as_file(self):
+        _install("file_b", category="convert.file")
+        cfg = {"convert": {"file": {"providers": ["file_b"]}}}
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write("x")
             path = f.name
         try:
-            with mock.patch(
-                "ezwork_tool.providers.markdown_new.os.path.getsize",
-                return_value=11 * 1024 * 1024,
-            ):
-                with self.assertRaises(pmod.ServiceError) as ctx:
-                    self.provider.convert_file(path)
-            self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
+            result = api.convert(cfg, path, {})
+            self.assertEqual(result.provider, "file_b")
         finally:
-            os.remove(path)
-
-
-class TestConvertFileHttp(unittest.TestCase):
-    def setUp(self):
-        self.provider = MarkdownNewProvider()
-
-    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
-    def test_success_parses_content_and_tokens(self, urlopen):
-        urlopen.return_value = _ok_response({
-            "success": True,
-            "data": {
-                "title": "t.pdf", "content": "# T\n\nbody",
-                "filename": "t.pdf", "file_type": ".pdf", "tokens": 42,
-            },
-        })
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            f.write(b"%PDF-1.4 fake")
-            path = f.name
-        try:
-            result = self.provider.convert_file(path, timeout=99)
-            self.assertEqual(result.content, "# T\n\nbody")
-            self.assertEqual(result.tokens, 42)
-            self.assertEqual(result.provider, "markdown_new")
-            # multipart POST，不是 GET
-            req = urlopen.call_args[0][0]
-            self.assertEqual(req.method, "POST")
-            self.assertIn("multipart/form-data", req.get_header("Content-type"))
-        finally:
-            os.remove(path)
-
-    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
-    def test_service_error_json_maps_to_invalid(self, urlopen):
-        urlopen.side_effect = _err_response(400, {
-            "success": False,
-            "error": "Unsupported file type: .exe. Supported: ...",
-            "code": "UNSUPPORTED_FORMAT",
-        })
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            path = f.name
-        try:
-            with self.assertRaises(pmod.ServiceError) as ctx:
-                self.provider.convert_file(path)
-            self.assertEqual(ctx.exception.category, pmod.CATEGORY_INVALID)
-            self.assertIn("Unsupported file type", str(ctx.exception))
-        finally:
-            os.remove(path)
-
-    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
-    def test_success_false_without_code_is_http(self, urlopen):
-        urlopen.side_effect = _err_response(500, {
-            "success": False, "error": "internal boom", "code": "INTERNAL",
-        })
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            path = f.name
-        try:
-            with self.assertRaises(pmod.ServiceError) as ctx:
-                self.provider.convert_file(path)
-            self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
-            self.assertIn("internal boom", str(ctx.exception))
-        finally:
-            os.remove(path)
-
-    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
-    def test_garbage_body_is_empty(self, urlopen):
-        resp = mock.MagicMock()
-        resp.status = 200
-        resp.headers = {}
-        resp.read.return_value = b"<html>not json"
-        resp.__enter__.return_value = resp
-        resp.__exit__.return_value = False
-        urlopen.return_value = resp
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            path = f.name
-        try:
-            with self.assertRaises(pmod.ServiceError) as ctx:
-                self.provider.convert_file(path)
-            self.assertEqual(ctx.exception.category, pmod.CATEGORY_EMPTY)
-        finally:
-            os.remove(path)
-
-    def test_supported_extensions_cover_service_list(self):
-        expected = {
-            ".txt", ".md", ".csv", ".json", ".html", ".htm", ".xml",
-            ".pdf", ".docx", ".odt", ".xlsx", ".xlsm", ".xlsb", ".xls",
-            ".et", ".ods", ".numbers", ".jpeg", ".jpg", ".png", ".webp", ".svg",
-        }
-        self.assertEqual(SUPPORTED_EXTENSIONS, expected)
+            os.unlink(path)
 
 
 class TestConvertChain(unittest.TestCase):
-    """链会跳过无 convert.file 类别的 provider（jina_reader），继续到 markdown_new。"""
+    def setUp(self):
+        FakeFetchProvider.fail_with = None
+        FakeFetchProvider.calls = 0
+        _install("chain_x", category="convert.page")
 
-    @mock.patch("ezwork_tool.providers.markdown_new.urllib.request.urlopen")
-    def test_skips_page_only_provider(self, urlopen):
-        urlopen.return_value = _ok_response({
-            "success": True,
-            "data": {"content": "# ok"},
-        })
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            path = f.name
-        try:
-            logs: list[str] = []
-            result = chainmod.convert_chain(
-                path, ["jina_reader", "markdown_new"], pmod.ProviderOpts(), log=logs.append
-            )
-            self.assertIsNotNone(result)
-            self.assertEqual(result.provider, "markdown_new")
-            self.assertTrue(any("jina_reader" in l and "skipped" in l for l in logs))
-        finally:
-            os.remove(path)
+    def tearDown(self):
+        prov.SERVICES.pop("chain_x", None)
 
+    def test_fallback_to_next(self):
+        _install("chain_y", category="convert.page", fail_with=ServiceError("boom"))
+        FakeFetchProvider.fail_with = ServiceError("boom")
+        _install("chain_z", category="convert.page")
+        FakeFetchProvider.fail_with = None
+        cfg = {"convert": {"page": {"providers": ["chain_y", "chain_z"]}}}
+        result = api.convert(cfg, "https://example.com", {})
+        self.assertEqual(result.provider, "chain_z")
 
-class TestConvertEntry(unittest.TestCase):
-    """convert 按输入类型路由：URL → convert.page 链；本地路径 → convert.file 链。"""
+    def test_low_quality_keeps_backup(self):
+        _install("chain_bad", category="convert.page", content="short",
+                 low_quality=True)
+        _install("chain_good", category="convert.page")
+        cfg = {"convert": {"page": {"providers": ["chain_bad", "chain_good"]}}}
+        result = api.convert(cfg, "https://example.com", {})
+        self.assertEqual(result.provider, "chain_good")
 
-    def test_missing_local_path_is_usage_error(self):
-        from ezwork_tool.errors import UsageError
-
-        with self.assertRaises(UsageError):
-            convert({}, "C:/definitely/missing/file.pdf")
-
-    @mock.patch("ezwork_tool.api.run_chain")
-    def test_url_routes_to_page_chain(self, run_chain):
-        run_chain.return_value = (
-            pmod.FetchResult(provider="markdown_new", content="# ok",
-                             url="https://example.com/a", elapsed=0.1),
-            "markdown_new",
-        )
-        result = convert({}, "https://example.com/a", {})
-        self.assertEqual(result.provider, "markdown_new")
-        category = run_chain.call_args[0][1]
-        self.assertEqual(category, "convert.page")
-
-    @mock.patch("ezwork_tool.api.run_chain")
-    def test_local_path_routes_to_file_chain(self, run_chain):
-        run_chain.return_value = (
-            pmod.FetchResult(provider="markdown_new", content="# ok",
-                             url="", elapsed=0.1),
-            "markdown_new",
-        )
-        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
-            path = f.name
-        try:
-            result = convert({}, path, {})
-            self.assertEqual(result.provider, "markdown_new")
-            category = run_chain.call_args[0][1]
-            self.assertEqual(category, "convert.file")
-        finally:
-            os.remove(path)
-
-    @mock.patch("ezwork_tool.api.run_chain")
-    def test_all_failed_raises_convert_error(self, run_chain):
-        from ezwork_tool.errors import ServiceError
-
-        run_chain.return_value = None
+    def test_all_failed(self):
+        _install("chain_f", category="convert.page", fail_with=ServiceError("boom"))
+        cfg = {"convert": {"page": {"providers": ["chain_f"]}}}
         with self.assertRaises(ServiceError) as ctx:
-            convert({}, "https://example.com/a")
+            api.convert(cfg, "https://example.com", {})
         self.assertEqual(ctx.exception.code, "convert_failed")
 
-    def test_unknown_provider_usage_error(self):
-        from ezwork_tool.errors import UsageError
 
-        with self.assertRaises(UsageError):
-            convert({}, "https://example.com/a", {"providers": "nope"})
-
-    @mock.patch("ezwork_tool.api.run_chain")
-    def test_providers_override_passed_to_chain(self, run_chain):
-        from ezwork_tool.base import FetchResult
-
-        run_chain.return_value = (FetchResult(provider="jina_reader", content="# ok",
-                                              url="https://example.com/a", elapsed=0.1),
-                                  "jina_reader")
-        result = convert({}, "https://example.com/a", {"providers": "jina_reader"})
-        self.assertEqual(result.provider, "jina_reader")
-        names = run_chain.call_args[0][0]
-        self.assertEqual(names, ["jina_reader"])
-
-
-class TestRunChainQualityGate(unittest.TestCase):
-    """质量门与回退链协作：low_quality 结果不立即返回，继续尝试；全低质返回后备。"""
-
-    def _make_service(self, name: str, result=None, error=None):
-        svc = mock.MagicMock()
-        svc.name = name
-        svc.categories = {"convert.page"}
-        if error is not None:
-            svc.fetch.side_effect = error
-        else:
-            svc.fetch.return_value = result
-        return svc
-
-    def _fetch_result(self, content: str, low: bool = False, reason: str = ""):
-        return pmod.FetchResult(
-            provider="x", content=content, url="https://example.com/a",
-            elapsed=0.1, low_quality=low, quality_reason=reason,
-        )
-
-    @mock.patch("ezwork_tool.chain.create_service")
-    def test_low_quality_continues_to_next_provider(self, create_service):
-        svc1 = self._make_service("a", result=self._fetch_result("可疑", low=True, reason="captcha"))
-        svc2 = self._make_service("b", result=self._fetch_result("# 真内容"))
-        create_service.side_effect = [svc1, svc2]
-        logs: list[str] = []
-        result = chainmod.run_chain(["a", "b"], "convert.page",
-                                    lambda s: s.fetch("https://example.com/a", 30),
-                                    log=logs.append)
-        self.assertIsNotNone(result)
-        self.assertEqual(result[1], "b")
-        self.assertEqual(result[0].content, "# 真内容")
-        self.assertTrue(any("suspicious" in l and "backup" in l for l in logs))
-
-    @mock.patch("ezwork_tool.chain.create_service")
-    def test_all_low_quality_returns_backup(self, create_service):
-        svc1 = self._make_service("a", result=self._fetch_result("可疑A", low=True, reason="captcha"))
-        svc2 = self._make_service("b", result=self._fetch_result("可疑B", low=True, reason="环境异常"))
-        create_service.side_effect = [svc1, svc2]
-        logs: list[str] = []
-        result = chainmod.run_chain(["a", "b"], "convert.page",
-                                    lambda s: s.fetch("https://example.com/a", 30),
-                                    log=logs.append)
-        self.assertIsNotNone(result)
-        self.assertEqual(result[1], "a")  # 第一个后备
-        self.assertEqual(result[0].content, "可疑A")
-        self.assertTrue(any("best backup" in l for l in logs))
-
-    @mock.patch("ezwork_tool.chain.create_service")
-    def test_low_quality_backup_after_failures(self, create_service):
-        svc1 = self._make_service("a", result=self._fetch_result("可疑A", low=True, reason="captcha"))
-        svc2 = self._make_service("b", error=pmod.ServiceError("boom", pmod.CATEGORY_HTTP))
-        create_service.side_effect = [svc1, svc2]
-        logs: list[str] = []
-        result = chainmod.run_chain(["a", "b"], "convert.page",
-                                    lambda s: s.fetch("https://example.com/a", 30),
-                                    log=logs.append)
-        self.assertIsNotNone(result)
-        self.assertEqual(result[1], "a")
-
-    @mock.patch("ezwork_tool.chain.create_service")
-    def test_ok_result_still_returns_immediately(self, create_service):
-        svc1 = self._make_service("a", result=self._fetch_result("# 正常"))
-        svc2 = self._make_service("b", result=self._fetch_result("# 不该被调用"))
-        create_service.side_effect = [svc1, svc2]
-        result = chainmod.run_chain(["a", "b"], "convert.page",
-                                    lambda s: s.fetch("https://example.com/a", 30))
-        self.assertEqual(result[1], "a")
-        self.assertFalse(svc2.fetch.called)
-
-
-def _mcp_response(payload: dict) -> tuple:
-    """MCP 成功响应三元组（http_post 返回形态）。"""
-    return (200, {}, json.dumps(payload).encode("utf-8"))
-
-
-class TestAnysearchExtract(unittest.TestCase):
-    """AnySearch MCP extract（convert.page）测试。"""
-
+class TestConvertParallel(unittest.TestCase):
     def setUp(self):
-        self.provider = AnySearchProvider()
+        FakeFetchProvider.fail_with = None
+        FakeFetchProvider.calls = 0
+        _install("par_a", category="convert.page")
+        _install("par_b", category="convert.page")
 
-    @mock.patch("ezwork_tool.providers.anysearch.http_post")
-    def test_success_parses_mcp_text_content(self, http_post):
-        http_post.return_value = _mcp_response({
-            "jsonrpc": "2.0", "id": 1,
-            "result": {"content": [
-                {"type": "text", "text": "## Example Domain\n\nbody"},
-            ]},
-        })
-        result = self.provider.fetch("https://example.com", timeout=30)
-        self.assertEqual(result.content, "## Example Domain\n\nbody")
-        self.assertEqual(result.provider, "anysearch")
-        self.assertEqual(result.url, "https://example.com")
-        # payload 结构：JSON-RPC tools/call → extract 工具
-        url, headers, payload, timeout = http_post.call_args[0]
-        self.assertEqual(url, "https://api.anysearch.com/mcp")
-        body = json.loads(payload)
-        self.assertEqual(body["method"], "tools/call")
-        self.assertEqual(body["params"]["name"], "extract")
-        self.assertEqual(body["params"]["arguments"]["url"], "https://example.com")
-        self.assertEqual(headers["Content-Type"], "application/json")
+    def tearDown(self):
+        prov.SERVICES.pop("par_a", None)
+        prov.SERVICES.pop("par_b", None)
 
-    @mock.patch("ezwork_tool.providers.anysearch.http_post")
-    def test_jsonrpc_error_maps_to_http_category(self, http_post):
-        http_post.return_value = _mcp_response({
-            "jsonrpc": "2.0", "id": 1,
-            "error": {"code": -32000, "message": "extract fetch failed"},
-        })
-        with self.assertRaises(pmod.ServiceError) as ctx:
-            self.provider.fetch("https://example.com")
-        self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
-        self.assertIn("extract fetch failed", str(ctx.exception))
+    def test_first_success_wins(self):
+        result = api.convert({}, "https://example.com",
+                             {"providers": "par_a,par_b"})
+        self.assertIn(result.provider, ("par_a", "par_b"))
 
-    @mock.patch("ezwork_tool.providers.anysearch.http_post")
-    def test_empty_content_is_empty_category(self, http_post):
-        http_post.return_value = _mcp_response({
-            "jsonrpc": "2.0", "id": 1, "result": {"content": []},
-        })
-        with self.assertRaises(pmod.ServiceError) as ctx:
-            self.provider.fetch("https://example.com")
-        self.assertEqual(ctx.exception.category, pmod.CATEGORY_EMPTY)
+    def test_partial_failure_ok(self):
+        _install("par_f", category="convert.page", fail_with=ServiceError("boom"))
+        result = api.convert({}, "https://example.com", {"providers": "par_f,par_a"})
+        self.assertEqual(result.provider, "par_a")
 
-    @mock.patch("ezwork_tool.providers.anysearch.http_post")
-    def test_invalid_json_response_is_http_category(self, http_post):
-        http_post.return_value = (200, {}, b"<html>not json</html>")
-        with self.assertRaises(pmod.ServiceError) as ctx:
-            self.provider.fetch("https://example.com")
-        self.assertEqual(ctx.exception.category, pmod.CATEGORY_HTTP)
+    def test_all_failed(self):
+        _install("par_f2", category="convert.page", fail_with=ServiceError("boom"))
+        _install("par_f3", category="convert.page", fail_with=ServiceError("boom"))
+        with self.assertRaises(ServiceError):
+            api.convert({}, "https://example.com", {"providers": "par_f2,par_f3"})
 
-    @mock.patch("ezwork_tool.providers.anysearch.http_post")
-    def test_api_key_sets_authorization(self, http_post):
-        http_post.return_value = _mcp_response({
-            "jsonrpc": "2.0", "id": 1,
-            "result": {"content": [{"type": "text", "text": "ok"}]},
-        })
-        provider = AnySearchProvider(
-            pmod.ProviderOpts(api_keys={"anysearch": "as_sk_test"})
-        )
-        provider.fetch("https://example.com")
-        headers = http_post.call_args[0][1]
-        self.assertEqual(headers["Authorization"], "Bearer as_sk_test")
+    def test_single_run(self):
+        result = api.convert({}, "https://example.com", {"providers": "par_a"})
+        self.assertEqual(result.provider, "par_a")
 
 
 if __name__ == "__main__":

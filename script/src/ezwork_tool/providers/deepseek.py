@@ -16,8 +16,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Literal
 
-from ..base import Provider, SearchResponse, SearchResult
-from ..errors import (
+from ..provider import Provider, SearchResponse, SearchResult
+from ..util import (
     CATEGORY_HTTP,
     CATEGORY_NETWORK,
     CATEGORY_TIMEOUT,
@@ -25,7 +25,7 @@ from ..errors import (
     NoResultsError,
     ServiceError,
 )
-from ..registry import register
+from ..provider import register
 
 # ── 常量 ───────────────────────────────────────────────────────────────────
 
@@ -259,6 +259,16 @@ class DeepSeekProvider(Provider):
 
     name = "deepseek"
     categories = frozenset({"search.web"})
+    config = {
+        "api_key": {"secret": True, "hint": "DeepSeek API Key（https://platform.deepseek.com）"},
+        "model": {"default": "deepseek-v4-flash",
+                  "hint": "模型：deepseek-v4-flash / deepseek-v4-pro"},
+        "thinking": {"default": "enabled",
+                     "hint": "思考模式：enabled / disabled（enabled 更准但更慢更贵）"},
+        "max_tokens": {"default": 32768, "hint": "最大输出 token 数"},
+    }
+    priority = {"search.web": 30}
+    auth_required = True
     # deepseek 无特有 CLI 参数（count/full 由服务端决定，忽略）
 
     def has_credentials(self, cfg: dict) -> bool:

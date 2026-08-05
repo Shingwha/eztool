@@ -2,8 +2,8 @@
 
 import unittest
 
-from ezwork_tool.formatter import format_data, format_image, format_search
-from ezwork_tool.base import SearchResponse, SearchResult
+from ezwork_tool.cli import format_data, format_image, format_search
+from ezwork_tool.provider import SearchResponse, SearchResult
 
 
 def _resp(results=None, answer=None):

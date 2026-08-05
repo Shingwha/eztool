@@ -10,7 +10,7 @@ import urllib.error
 import zipfile
 from unittest import mock
 
-from ezwork_tool import base as pmod
+from ezwork_tool import provider as pmod
 from ezwork_tool.providers.mineru import (
     BASE_URL,
     V1_MAX_FILE_SIZE,

@@ -9,8 +9,8 @@ unreachable — the fallback chain will time out and move on.
 """
 from __future__ import annotations
 
-from ..base import Provider
-from ..registry import register
+from ..provider import Provider
+from ..provider import register
 
 
 @register
@@ -18,6 +18,12 @@ class JinaReaderProvider(Provider):
     name = "jina_reader"
     categories = frozenset({"convert.page"})
     base_url = "https://r.jina.ai/"
+    # 匿名可用（限流）；配了 key 提额度
+    config = {
+        "api_key": {"secret": True, "hint": "Jina API Key（可选，匿名限流可用）"},
+        "timeout": {"default": 10, "hint": "jina 超时秒数"},
+    }
+    priority = {"convert.page": 20}
 
     def build_headers(self) -> dict:
         headers = super().build_headers()

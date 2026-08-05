@@ -16,10 +16,10 @@ from __future__ import annotations
 import json
 import time
 
-from ..base import Provider, SearchResponse, SearchResult
-from ..errors import CATEGORY_HTTP, NoResultsError, ServiceError
-from ..http import http_post
-from ..registry import register
+from ..provider import Provider, SearchResponse, SearchResult
+from ..util import CATEGORY_HTTP, NoResultsError, ServiceError
+from ..util import http_post
+from ..provider import register
 
 API_BASE = "https://api.tavily.com"
 SEARCH_URL = f"{API_BASE}/search"
@@ -97,8 +97,15 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 class TavilyProvider(Provider):
     name = "tavily"
     categories = frozenset({"search.web", "convert.page"})
+    # keyless 免费兜底（限流）；配了 key 走正式额度
+    config = {
+        "api_key": {"secret": True, "hint": "Tavily API Key（不配则自动走 keyless 免费模式）"},
+        "timeout": {"default": 30, "hint": "tavily 请求超时秒数"},
+    }
+    priority = {"convert.page": 40}
+    # search.web 不声明 priority → 不进默认搜索链（--providers tavily 显式指定）
     # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）
-    category_params = {}
+    params = {}
 
     def has_credentials(self, cfg: dict) -> bool:
         return True  # keyless 兜底，永远可用

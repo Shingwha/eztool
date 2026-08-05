@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 
-from ..base import Provider
-from ..errors import CATEGORY_HTTP, ServiceError
-from ..http import http_post
-from ..registry import register
+from ..provider import Provider
+from ..util import CATEGORY_HTTP, ServiceError
+from ..util import http_post
+from ..provider import register
 
 API_URL = "https://api.firecrawl.dev/v2/scrape"
 
@@ -26,6 +26,12 @@ API_URL = "https://api.firecrawl.dev/v2/scrape"
 class FirecrawlProvider(Provider):
     name = "firecrawl"
     categories = frozenset({"convert.page"})
+    # keyless 可用（per-IP 限流）；配了 key 提额度
+    config = {
+        "api_key": {"secret": True, "hint": "Firecrawl API Key（可选，keyless 限流可用）"},
+        "timeout": {"default": 60, "hint": "firecrawl 超时秒数"},
+    }
+    priority = {"convert.page": 50}
 
     def build_headers(self) -> dict:
         headers = {"Content-Type": "application/json"}

@@ -17,15 +17,15 @@ import json
 import os
 import urllib.request
 
-from ..base import FetchResult, Provider
-from ..errors import (
+from ..provider import FetchResult, Provider
+from ..util import (
     CATEGORY_EMPTY,
     CATEGORY_HTTP,
     CATEGORY_INVALID,
     ServiceError,
 )
-from ..http import build_multipart, map_http_error
-from ..registry import register
+from ..util import build_multipart, map_http_error
+from ..provider import register
 
 CONVERT_URL = "https://markdown.new/convert"
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB service limit
@@ -46,6 +46,11 @@ class MarkdownNewProvider(Provider):
     name = "markdown_new"
     categories = frozenset({"convert.page", "convert.file"})
     base_url = "https://markdown.new/"
+    # 免费无 key
+    config = {
+        "timeout": {"default": 30, "hint": "markdown.new 超时秒数"},
+    }
+    priority = {"convert.page": 10, "convert.file": 20}
 
     # Note: markdown.new treats the whole request path+query as the target
     # URL, so we cannot append ?method= without corrupting URLs that carry

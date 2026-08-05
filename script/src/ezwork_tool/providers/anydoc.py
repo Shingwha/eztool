@@ -20,13 +20,13 @@ import os
 import time
 from html.parser import HTMLParser
 
-from ..base import FetchResult, Provider
-from ..errors import (
+from ..provider import FetchResult, Provider
+from ..util import (
     CATEGORY_EMPTY,
     CATEGORY_INVALID,
     ServiceError,
 )
-from ..registry import register
+from ..provider import register
 
 # ── anydoc 引擎格式（Rust）───────────────────────────────────────────────
 ENGINE_EXTENSIONS = frozenset({
@@ -316,6 +316,11 @@ class AnydocProvider(Provider):
 
     name = "anydoc"
     categories = frozenset({"convert.file"})
+    # 本地库无需凭证
+    config = {
+        "timeout": {"default": 60, "hint": "anydoc 本地解析超时秒数"},
+    }
+    priority = {"convert.file": 10}
 
     def has_credentials(self, cfg: dict) -> bool:
         """本地库没有凭证概念：已安装即视为可用（纯文本类不需要库）。"""

@@ -1,9 +1,11 @@
 """eztool 统一配置：~/.config/ezwork-tool/config.json。
 
-两层结构：``providers.<name>`` 段放各服务商凭证/超时；``search.<类别>`` /
-``convert.<类别>`` 段（search.web / search.image / search.data /
-convert.page / convert.file）放类别回退链与缺省超时。
-类别段 ``providers`` 缺省 = 该类别的注册顺序（registry），显式配置则覆盖。
+结构：``providers.<name>`` 段（各服务商凭证/超时，键由 provider 的 ``config``
+声明自动生成）+ ``search.<类别>`` / ``convert.<类别>`` 段（类别回退链与缺省
+超时，链默认值由 provider 的 ``priority`` 自动派生）。
+
+本模块只剩通用读写工具——DEFAULTS / SECRET_KEYS / KEY_HINTS 全部由
+``provider.provider_config_map()`` 生成，新增 provider/配置键无需改这里。
 """
 
 from __future__ import annotations
@@ -13,92 +15,70 @@ import json
 import os
 from typing import Any
 
+from . import provider as prov
+from . import providers as _providers  # noqa: F401  (side-effect: 先注册再构建 DEFAULTS)
+
 CONFIG_DIR_ENV = "EZTOOL_CONFIG_DIR"
 
-# 各段默认值（load 时与文件深合并，保证缺键可用）
-DEFAULTS: dict[str, Any] = {
-    "providers": {
-        "doubao": {
-            "api_key": None, "ak": None, "sk": None, "auth": None,
-            "count_web": 20, "count_image": 5, "need_url": False,
-            "need_content": False, "content_formats": None,
-            "time_range": None, "industry": None, "timeout": 30,
-        },
-        "anysearch": {"api_key": None, "max_results": 20},
-        "deepseek": {"api_key": None, "model": "deepseek-v4-flash",
-                     "thinking": "enabled", "max_tokens": 32768},
-        "firecrawl": {"api_key": None, "timeout": 60},
-        "markdown_new": {"timeout": 30},
-        "jina_reader": {"api_key": None, "timeout": 10},
-        "mineru": {"api_key": None, "timeout": 300},
-        "anydoc": {"timeout": 60},
-        "tavily": {"api_key": None, "timeout": 30},
-        "exa": {"api_key": None, "timeout": 30},
-    },
-    # 搜索类别段：回退链默认顺序（与 registry 注册顺序同源，可显式覆盖）
-    "search": {
-        "web": {"providers": ["doubao", "anysearch", "deepseek"], "timeout": 30},
-        "image": {"providers": ["doubao"], "timeout": 30},
-        "data": {"providers": ["anysearch"], "timeout": 30},
-    },
-    # 转换类别段：page=URL 抓取（免费优先，tavily 兜底反爬站），file=本地文件（本地解析优先）
-    "convert": {
-        "page": {"providers": ["markdown_new", "jina_reader", "anysearch", "tavily", "firecrawl"], "timeout": 30},
-        "file": {"providers": ["anydoc", "markdown_new", "mineru"], "timeout": 60},
-    },
+# 类别段结构（链默认值运行时从 provider.priority 派生）
+_CATEGORY_SECTIONS = {
+    "search": {"web", "image", "data"},
+    "convert": {"page", "file"},
 }
 
-SECRET_KEYS = frozenset({
-    "providers.doubao.api_key", "providers.doubao.ak", "providers.doubao.sk",
-    "providers.anysearch.api_key", "providers.deepseek.api_key",
-    "providers.firecrawl.api_key", "providers.jina_reader.api_key",
-    "providers.mineru.api_key",
-    "providers.tavily.api_key", "providers.exa.api_key",
-})
 
-# 每个可设键的说明（config set 提示 / --help 用）
-KEY_HINTS = {
-    "providers.doubao.api_key": "豆包 WebSearch API Key（Bearer）",
-    "providers.doubao.ak": "火山引擎 AccessKey",
-    "providers.doubao.sk": "火山引擎 SecretKey",
-    "providers.doubao.auth": "鉴权方式：apikey / aksk（留空自动检测）",
-    "providers.doubao.count_web": "网页结果数（1-50）",
-    "providers.doubao.count_image": "图片结果数（1-5）",
-    "providers.doubao.need_url": "只返回带落地链接的结果（true/false）",
-    "providers.doubao.need_content": "只返回带正文的结果（true/false）",
-    "providers.doubao.content_formats": "正文格式：text / markdown",
-    "providers.doubao.time_range": "时间范围：OneDay/OneWeek/OneMonth/OneYear 或 YYYY-MM-DD..YYYY-MM-DD",
-    "providers.doubao.industry": "行业搜索：finance / game / gov",
-    "providers.doubao.timeout": "doubao 请求超时秒数",
-    "providers.anysearch.api_key": "AnySearch API Key（可选，匿名可用）",
-    "providers.anysearch.max_results": "结果数（1-20）",
-    "providers.deepseek.api_key": "DeepSeek API Key（https://platform.deepseek.com）",
-    "providers.deepseek.model": "模型：deepseek-v4-flash / deepseek-v4-pro",
-    "providers.deepseek.thinking": "思考模式：enabled / disabled（enabled 更准但更慢更贵）",
-    "providers.deepseek.max_tokens": "最大输出 token 数",
-    "providers.firecrawl.api_key": "Firecrawl API Key（可选）",
-    "providers.firecrawl.timeout": "firecrawl 超时秒数",
-    "providers.markdown_new.timeout": "markdown.new 超时秒数",
-    "providers.jina_reader.api_key": "Jina API Key（可选）",
-    "providers.jina_reader.timeout": "jina 超时秒数",
-    "providers.mineru.api_key": "MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML）；不配走 v1 轻量 API（≤10MB/20页）",
-    "providers.mineru.timeout": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）",
-    "providers.tavily.api_key": "Tavily API Key（不配则自动走 keyless 免费模式）",
-    "providers.tavily.timeout": "tavily 请求超时秒数",
-    "providers.exa.api_key": "Exa API Key（https://dashboard.exa.ai）",
-    "providers.exa.timeout": "exa 请求超时秒数",
-    "providers.anydoc.timeout": "anydoc 本地解析超时秒数",
-    "search.web.providers": "网页搜索回退链，逗号分隔：doubao,anysearch,deepseek",
-    "search.web.timeout": "网页搜索默认超时秒数",
-    "search.image.providers": "图片搜索回退链，逗号分隔：doubao",
-    "search.image.timeout": "图片搜索默认超时秒数",
-    "search.data.providers": "专业数据源回退链，逗号分隔：anysearch",
-    "search.data.timeout": "专业数据源搜索默认超时秒数",
-    "convert.page.providers": "URL → Markdown 抓取链，逗号分隔（免费优先，tavily 兜底反爬站）：markdown_new,jina_reader,anysearch,tavily,firecrawl",
-    "convert.page.timeout": "URL 抓取默认超时秒数",
-    "convert.file.providers": "文件 → Markdown 转换链，逗号分隔（本地解析优先）：anydoc,markdown_new,mineru",
-    "convert.file.timeout": "文件转换默认超时秒数",
-}
+def _build_defaults() -> dict[str, Any]:
+    """默认配置：providers 段来自元数据；类别段链默认值自动派生。"""
+    defaults: dict[str, Any] = {"providers": {}, "search": {}, "convert": {}}
+    for name, keys in prov.provider_config_map().items():
+        sec = {"timeout": 30}
+        for key, meta in keys.items():
+            sec[key] = meta["default"]
+        defaults["providers"][name] = sec
+    for domain, ops in _CATEGORY_SECTIONS.items():
+        for op in ops:
+            cat = f"{domain}.{op}"
+            defaults[domain][op] = {
+                "providers": prov.default_chain(cat),  # 出厂默认 = 自动派生；可显式覆盖
+                "timeout": 30,
+            }
+    return defaults
+
+
+DEFAULTS = _build_defaults()
+
+
+def _build_secret_keys() -> frozenset:
+    keys: set[str] = set()
+    for name, kmap in prov.provider_config_map().items():
+        for key, meta in kmap.items():
+            if meta["secret"]:
+                keys.add(f"providers.{name}.{key}")
+    return frozenset(keys)
+
+
+SECRET_KEYS = _build_secret_keys()
+
+
+def _build_key_hints() -> dict[str, str]:
+    hints: dict[str, str] = {}
+    for name, kmap in prov.provider_config_map().items():
+        for key, meta in kmap.items():
+            if meta["hint"]:
+                hints[f"providers.{name}.{key}"] = meta["hint"]
+    for domain, ops in _CATEGORY_SECTIONS.items():
+        for op in ops:
+            cat = f"{domain}.{op}"
+            chain = ", ".join(prov.default_chain(cat)) or "(空——无 provider 声明 priority)"
+            hints[f"{domain}.{op}.providers"] = (
+                f"{domain}.{op} 回退链，逗号分隔（默认: {chain}）"
+            )
+            hints[f"{domain}.{op}.timeout"] = f"{domain}.{op} 默认超时秒数"
+    return hints
+
+
+KEY_HINTS = _build_key_hints()
+
 
 def config_dir() -> str:
     return os.environ.get(CONFIG_DIR_ENV) or os.path.join(
@@ -118,7 +98,6 @@ def deep_merge(base: dict, override: dict) -> dict:
         else:
             out[k] = v
     return out
-
 
 
 def load_config() -> dict:

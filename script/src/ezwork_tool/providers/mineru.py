@@ -25,17 +25,17 @@ import time
 import urllib.request
 import zipfile
 
-from ..base import FetchResult, Provider
-from ..errors import (
+from ..provider import FetchResult, Provider
+from ..util import (
     CATEGORY_EMPTY,
     CATEGORY_HTTP,
     CATEGORY_INVALID,
     CATEGORY_TIMEOUT,
     ServiceError,
 )
-from ..http import http_get, http_post, map_http_error
-from ..quality import checked_text
-from ..registry import register
+from ..util import http_get, http_post, map_http_error
+from ..util import checked_text
+from ..provider import register
 
 BASE_URL = "https://mineru.net"
 V1_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -60,6 +60,13 @@ _INVALID_CODES = {-30001, -30002, -30003, -30004, -500, -10002}
 class MinerUProvider(Provider):
     name = "mineru"
     categories = frozenset({"convert.page", "convert.file"})
+    # 无 token 走 v1 免费轻量 API（限流）；配了 token 走 v4 Precision（更全）
+    config = {
+        "api_key": {"secret": True, "hint": "MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML）；不配走 v1 轻量 API（≤10MB/20页）"},
+        "timeout": {"default": 300, "hint": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）"},
+    }
+    priority = {"convert.file": 30}
+    # convert.page 不声明 priority → 不进 URL 抓取默认链
 
     @property
     def _v4(self) -> bool:

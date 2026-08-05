@@ -8,7 +8,7 @@ import types
 import unittest
 from unittest import mock
 
-from ezwork_tool.errors import CATEGORY_EMPTY, CATEGORY_INVALID, ServiceError
+from ezwork_tool.util import CATEGORY_EMPTY, CATEGORY_INVALID, ServiceError
 from ezwork_tool.providers.anydoc import (
     AnydocProvider,
     _html_to_markdown,

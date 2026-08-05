@@ -18,8 +18,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from ..base import FetchResult, ParamSpec, Provider, SearchResponse, SearchResult
-from ..errors import (
+from ..provider import FetchResult, ParamSpec, Provider, SearchResponse, SearchResult
+from ..util import (
     CATEGORY_EMPTY,
     CATEGORY_HTTP,
     CATEGORY_INVALID,
@@ -29,9 +29,9 @@ from ..errors import (
     ServiceError,
     UsageError,
 )
-from ..http import http_post
-from ..quality import checked_text
-from ..registry import register
+from ..util import http_post
+from ..util import checked_text
+from ..provider import register
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -366,7 +366,13 @@ class AnySearchProvider(Provider):
 
     name = "anysearch"
     categories = frozenset({"search.web", "search.data", "convert.page"})
-    category_params = {
+    # 匿名可用（限流）；配了 key 走正式额度
+    config = {
+        "api_key": {"secret": True, "hint": "AnySearch API Key（可选，匿名可用）"},
+        "max_results": {"default": 20, "hint": "结果数（1-20）"},
+    }
+    priority = {"search.web": 20, "search.data": 10, "convert.page": 30}
+    params = {
         "search.data": {
             "tag": ParamSpec(metavar="TAG", help="数据源标签（见 eztool search tags）"),
             "params": ParamSpec(

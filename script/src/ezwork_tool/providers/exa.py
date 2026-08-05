@@ -14,10 +14,10 @@ from __future__ import annotations
 import json
 import time
 
-from ..base import Provider, SearchResponse, SearchResult
-from ..errors import CATEGORY_HTTP, NoResultsError, ServiceError
-from ..http import http_post
-from ..registry import register
+from ..provider import Provider, SearchResponse, SearchResult
+from ..util import CATEGORY_HTTP, NoResultsError, ServiceError
+from ..util import http_post
+from ..provider import register
 
 API_BASE = "https://api.exa.ai"
 SEARCH_URL = f"{API_BASE}/search"
@@ -100,8 +100,14 @@ def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
 class ExaProvider(Provider):
     name = "exa"
     categories = frozenset({"search.web", "convert.page"})
+    # 必须配 key；不声明 priority → 不进默认链（--providers exa 或配置链使用）
+    config = {
+        "api_key": {"secret": True, "hint": "Exa API Key（https://dashboard.exa.ai）"},
+        "timeout": {"default": 30, "hint": "exa 请求超时秒数"},
+    }
+    auth_required = True
     # 无 provider 特有参数（与 doubao/anysearch/deepseek 一致）
-    category_params = {}
+    params = {}
 
     def has_credentials(self, cfg: dict) -> bool:
         return bool(_api_key(cfg))

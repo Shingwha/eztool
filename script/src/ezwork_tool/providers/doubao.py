@@ -26,15 +26,15 @@ import urllib.request
 from typing import Any
 from urllib.parse import quote
 
-from ..base import ParamSpec, Provider, SearchResponse, SearchResult
-from ..errors import (
+from ..provider import ParamSpec, Provider, SearchResponse, SearchResult
+from ..util import (
     CATEGORY_HTTP,
     CATEGORY_NETWORK,
     CredentialsError,
     NoResultsError,
     ServiceError,
 )
-from ..registry import register
+from ..provider import register
 
 # --- Endpoint constants ------------------------------------------------------
 
@@ -408,8 +408,24 @@ class DoubaoProvider(Provider):
 
     name = "doubao"
     categories = frozenset({"search.web", "search.image"})
+    # 配置键（自动生成 config show/set 的键、默认值、secret 脱敏、提示）
+    config = {
+        "api_key": {"secret": True, "hint": "豆包 WebSearch API Key（Bearer）"},
+        "ak": {"secret": True, "hint": "火山引擎 AccessKey"},
+        "sk": {"secret": True, "hint": "火山引擎 SecretKey"},
+        "auth": {"hint": "鉴权方式：apikey / aksk（留空自动检测）"},
+        "count_web": {"default": 20, "hint": "网页结果数（1-50）"},
+        "count_image": {"default": 5, "hint": "图片结果数（1-5）"},
+        "need_url": {"default": False, "hint": "只返回带落地链接的结果（true/false）"},
+        "need_content": {"default": False, "hint": "只返回带正文的结果（true/false）"},
+        "content_formats": {"hint": "正文格式：text / markdown"},
+        "time_range": {"hint": "时间范围：OneDay/OneWeek/OneMonth/OneYear 或 YYYY-MM-DD..YYYY-MM-DD"},
+        "industry": {"hint": "行业搜索：finance / game / gov"},
+    }
+    priority = {"search.web": 10, "search.image": 10}  # 默认链排序（小在前）
+    auth_required = True  # 必须有 apikey 或 AK/SK 才能用（链跳过未配的）
     # 图片搜索由 search image 子命令路由（api 注入 image=True），参数面只留图片专属
-    category_params = {
+    params = {
         "search.image": {
             "width_min": ParamSpec(type=int, help="最小宽度"),
             "width_max": ParamSpec(type=int, help="最大宽度"),

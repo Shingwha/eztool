@@ -2,8 +2,8 @@
 
 import unittest
 
-from ezwork_tool import base as pmod
-from ezwork_tool.quality import (
+from ezwork_tool import provider as pmod
+from ezwork_tool.util import (
     BLOCK_LIMIT,
     WARN_LIMIT,
     assess_content,
@@ -90,7 +90,7 @@ class TestAssessContent(unittest.TestCase):
 
 class TestCheckedText(unittest.TestCase):
     def test_blocked_raises_service_error(self):
-        from ezwork_tool.errors import CATEGORY_BLOCKED
+        from ezwork_tool.util import CATEGORY_BLOCKED
 
         with self.assertRaises(pmod.ServiceError) as ctx:
             checked_text("markdown_new", WECHAT_BLOCK_MD_NEW)

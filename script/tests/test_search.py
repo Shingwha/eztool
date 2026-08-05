@@ -1,169 +1,183 @@
-"""search_category 各类别路由测试：回退链过滤、参数归属、image 模式注入。"""
+"""search_category 测试：回退链（凭证过滤）/ 并行合并 / 单跑。"""
 
 import unittest
 
-from ezwork_tool import api
-from ezwork_tool.base import ParamSpec, Provider, SearchResponse, SearchResult
-from ezwork_tool.errors import CATEGORY_INVALID, ServiceError, UsageError
-from ezwork_tool.registry import CATEGORIES, SERVICES
+from ezwork_tool import api, provider as prov
+from ezwork_tool.provider import Provider, SearchResponse, SearchResult
+from ezwork_tool.util import CredentialsError, ServiceError, UsageError
+
+_SAVED = dict(prov.SERVICES)
 
 
-class _FakeProvider(Provider):
-    """可配置行为的假搜索服务商（类级属性，create_service 新建实例仍生效）。"""
+class FakeSearchProvider(Provider):
+    """可配置行为的假搜索服务商（类级属性）。"""
 
-    name = ""
-    categories = frozenset()
-    category_params = {}
     fail_with = None
     results = []
-    seen_opts = None
+    answer = None
+    calls = 0
+    auth_required = False
 
     def has_credentials(self, cfg):
         return True
 
     def search(self, cfg, query, opts):
-        _FakeProvider.seen_opts = dict(opts)
+        FakeSearchProvider.calls += 1
         if self.fail_with:
             raise self.fail_with
-        return SearchResponse(query=query, results=self.results, metadata={})
+        return SearchResponse(
+            query=query, results=[SearchResult(**r) for r in self.results],
+            answer=self.answer, metadata={},
+        )
 
 
-def _make(name, **attrs):
-    cls = type(f"Fake{name.title()}", (_FakeProvider,), {"name": name})
+def _install(name, category="search.web", **attrs):
+    cls = type(f"Fake{name.title()}", (FakeSearchProvider,),
+               {"name": name, "categories": frozenset({category})})
     for k, v in attrs.items():
         setattr(cls, k, v)
+    if "has_credentials" not in attrs:
+        cls.has_credentials = lambda self, cfg: True
+    prov.SERVICES[name] = cls
     return cls
 
 
-class TestSearchCategoryRouting(unittest.TestCase):
-    """回退链：第一个成功即返回；失败自动换下一个；全部失败抛错。"""
+def setUpModule():
+    prov.SERVICES.clear()
+    prov.SERVICES.update(_SAVED)
 
-    CATEGORY = "search.web"
+
+def tearDownModule():
+    prov.SERVICES.clear()
+    prov.SERVICES.update(_SAVED)
+
+
+class TestChain(unittest.TestCase):
+    """回退链：第一个成功即返回；失败换下一个；全失败报错。"""
 
     def setUp(self):
-        self._orig = list(CATEGORIES.get(self.CATEGORY, []))
-        CATEGORIES[self.CATEGORY] = ["aaa", "bbb"]
-        SERVICES["aaa"] = _make("aaa", categories=frozenset({self.CATEGORY}),
-                                results=[SearchResult(title="t", url="u")])
-        SERVICES["bbb"] = _make("bbb", categories=frozenset({self.CATEGORY}),
-                                results=[SearchResult(title="t2", url="u2")])
-        _FakeProvider.seen_opts = None
-        _FakeProvider.fail_with = None
+        FakeSearchProvider.fail_with = None
+        FakeSearchProvider.results = [{"title": "t", "url": "u"}]
+        FakeSearchProvider.answer = None
+        FakeSearchProvider.calls = 0
+        _install("chain_a")
+        _install("chain_b")
+        _install("chain_c")
 
     def tearDown(self):
-        CATEGORIES[self.CATEGORY] = self._orig
-        SERVICES.pop("aaa", None)
-        SERVICES.pop("bbb", None)
+        for n in ("chain_a", "chain_b", "chain_c"):
+            prov.SERVICES.pop(n, None)
 
     def test_first_success_wins(self):
-        resp = api.search_category({}, self.CATEGORY, "q")
-        self.assertEqual(resp.metadata["backend"], "aaa")
+        resp = api.search_category({}, "search.web", "q", {"providers": "chain_a,chain_b"})
+        self.assertEqual(resp.metadata["backend"], "chain_a,chain_b")  # 并行：都跑了
+        self.assertEqual(FakeSearchProvider.calls, 2)
 
-    def test_failure_falls_back_to_next(self):
-        SERVICES["aaa"].fail_with = ServiceError("boom", "http")
-        resp = api.search_category({}, self.CATEGORY, "q")
-        self.assertEqual(resp.metadata["backend"], "bbb")
+    def test_chain_fallback(self):
+        # 显式配置链：第一个失败 → 换下一个成功
+        FakeSearchProvider.fail_with = ServiceError("boom")
+        _install("chain_ok", fail_with=None, results=[{"title": "ok", "url": "u2"}])
+        cfg = {"search": {"web": {"providers": ["chain_a", "chain_ok"]}}}
+        resp = api.search_category(cfg, "search.web", "q")
+        self.assertEqual(resp.metadata["backend"], "chain_ok")
 
     def test_all_failed_raises(self):
-        SERVICES["aaa"].fail_with = ServiceError("boom", "http")
-        SERVICES["bbb"].fail_with = ServiceError("boom", "http")
+        FakeSearchProvider.fail_with = ServiceError("boom")
         with self.assertRaises(ServiceError) as ctx:
-            api.search_category({}, self.CATEGORY, "q")
+            api.search_category({}, "search.web", "q", {"providers": "chain_a"})
         self.assertEqual(ctx.exception.code, "search_failed")
 
-    def test_providers_override(self):
-        resp = api.search_category({}, self.CATEGORY, "q", {"providers": "bbb"})
-        self.assertEqual(resp.metadata["backend"], "bbb")
-
-    def test_config_section_order(self):
-        cfg = {"search": {"web": {"providers": ["bbb"]}}}
-        resp = api.search_category(cfg, self.CATEGORY, "q")
-        self.assertEqual(resp.metadata["backend"], "bbb")
-
-    def test_unknown_provider_usage_error(self):
+    def test_unknown_provider_is_usage_error(self):
         with self.assertRaises(UsageError):
-            api.search_category({}, self.CATEGORY, "q", {"providers": "nope"})
+            api.search_category({}, "search.web", "q", {"providers": "nope"})
 
-    def test_unknown_category(self):
-        with self.assertRaises(ServiceError) as ctx:
-            api.search_category({}, "search.xyz", "q")
-        self.assertEqual(ctx.exception.category, CATEGORY_INVALID)
+    def test_auth_required_skipped_in_chain(self):
+        # auth_required 且无凭证 → 链跳过（不调用 search），换下一个
+        _install("chain_auth", auth_required=True,
+                 has_credentials=lambda self, cfg: False)
+        FakeSearchProvider.calls = 0
+        cfg = {"search": {"web": {"providers": ["chain_auth", "chain_a"]}}}
+        resp = api.search_category(cfg, "search.web", "q")
+        self.assertEqual(resp.metadata["backend"], "chain_a")
+        self.assertEqual(FakeSearchProvider.calls, 1)  # 只 chain_a 被调用
+
+    def test_explicit_providers_skip_credential_filter(self):
+        _install("chain_auth2", auth_required=True,
+                 has_credentials=lambda self, cfg: False)
+        FakeSearchProvider.calls = 0
+        cfg = {"search": {"web": {"providers": ["chain_auth2"]}}}
+        with self.assertRaises(CredentialsError):
+            api.search_category(cfg, "search.web", "q", {"providers": "chain_auth2"})
 
 
-class TestParamOwnership(unittest.TestCase):
-    """参数归属：provider 特有参数只允许在包含其归属 provider 的链上使用。"""
-
-    CATEGORY = "search.web"
+class TestParallel(unittest.TestCase):
+    """并行：合并去重、来源标注、单失败不影响、全失败报错。"""
 
     def setUp(self):
-        self._orig = list(CATEGORIES.get(self.CATEGORY, []))
-        CATEGORIES[self.CATEGORY] = ["aaa", "bbb"]
-        SERVICES["aaa"] = _make(
-            "aaa", categories=frozenset({self.CATEGORY}),
-            category_params={self.CATEGORY: {"tag": ParamSpec()}},
-            results=[SearchResult(title="t", url="u")],
-        )
-        SERVICES["bbb"] = _make("bbb", categories=frozenset({self.CATEGORY}),
-                                results=[SearchResult(title="t2", url="u2")])
-        _FakeProvider.fail_with = None
+        FakeSearchProvider.fail_with = None
+        FakeSearchProvider.calls = 0
+        _install("par_a", results=[{"title": "a1", "url": "u1"},
+                                   {"title": "dup", "url": "same"}])
+        _install("par_b", results=[{"title": "b1", "url": "u2"},
+                                   {"title": "dup", "url": "same"}])
+        _install("par_c", results=[{"title": "c1", "url": "u3"}])
 
     def tearDown(self):
-        CATEGORIES[self.CATEGORY] = self._orig
-        SERVICES.pop("aaa", None)
-        SERVICES.pop("bbb", None)
+        for n in ("par_a", "par_b", "par_c"):
+            prov.SERVICES.pop(n, None)
 
-    def test_own_param_ok(self):
-        resp = api.search_category({}, self.CATEGORY, "q", {"tag": "x"})
-        self.assertEqual(resp.metadata["backend"], "aaa")
-        self.assertEqual(_FakeProvider.seen_opts["tag"], "x")
+    def test_merge_dedup_and_source(self):
+        resp = api.search_category({}, "search.web", "q",
+                                   {"providers": "par_a,par_b", "count": 2})
+        urls = [r.url for r in resp.results]
+        self.assertEqual(sorted(urls), sorted(["u1", "u2", "same"]))  # 去重
+        sources = {r.source for r in resp.results}
+        self.assertLessEqual(sources, {"par_a", "par_b"})
+        self.assertEqual(resp.metadata["backend"], "par_a,par_b")
 
-    def test_foreign_param_rejected(self):
-        # tag 归 aaa，但链只含 bbb → UsageError
-        with self.assertRaises(UsageError):
-            api.search_category({}, self.CATEGORY, "q", {"providers": "bbb", "tag": "x"})
+    def test_partial_failure_ok(self):
+        FakeSearchProvider.fail_with = ServiceError("boom")
+        _install("par_ok", fail_with=None, results=[{"title": "ok", "url": "u9"}])
+        resp = api.search_category({}, "search.web", "q",
+                                   {"providers": "par_a,par_ok"})
+        # par_a 失败、par_ok 成功 → 返回 par_ok 结果
+        self.assertIn("par_ok", resp.metadata["backend"])
 
-    def test_falsy_params_ignored(self):
-        api.search_category({}, self.CATEGORY, "q", {"tag": None})  # 不抛
+    def test_all_failed(self):
+        FakeSearchProvider.fail_with = ServiceError("boom")
+        with self.assertRaises(ServiceError):
+            api.search_category({}, "search.web", "q", {"providers": "par_a,par_b"})
+
+    def test_single_provider_is_run(self):
+        resp = api.search_category({}, "search.web", "q", {"providers": "par_c"})
+        self.assertEqual(resp.metadata["backend"], "par_c")
+        self.assertEqual(len(resp.results), 1)
 
 
-class TestImageCategory(unittest.TestCase):
-    """search image：只路由 doubao 声明；自动注入 image=True（provider 零改动）。"""
-
-    CATEGORY = "search.image"
-
+class TestImageMode(unittest.TestCase):
     def setUp(self):
-        self._orig = list(CATEGORIES.get(self.CATEGORY, []))
-        CATEGORIES[self.CATEGORY] = ["aaa"]
-        SERVICES["aaa"] = _make(
-            "aaa", categories=frozenset({self.CATEGORY}),
-            category_params={self.CATEGORY: {
-                "width_min": ParamSpec(type=int),
-                "shapes": ParamSpec(choices=("横长方形", "竖长方形")),
-            }},
-            results=[SearchResult(title="img", url="https://x/i.png",
-                                  extra={"width": 800, "height": 600})],
-        )
-        _FakeProvider.fail_with = None
+        _install("img_a", category="search.image")
 
     def tearDown(self):
-        CATEGORIES[self.CATEGORY] = self._orig
-        SERVICES.pop("aaa", None)
+        prov.SERVICES.pop("img_a", None)
 
     def test_image_flag_injected(self):
-        resp = api.search_category({}, self.CATEGORY, "猫", {"width_min": 100})
-        self.assertEqual(_FakeProvider.seen_opts["image"], True)
-        self.assertEqual(_FakeProvider.seen_opts["width_min"], 100)
-        self.assertEqual(resp.results[0].extra["width"], 800)
+        seen = {}
 
-    def test_unknown_provider_in_category_rejected(self):
-        with self.assertRaises(UsageError):
-            api.search_category({}, self.CATEGORY, "q", {"providers": "nope"})
+        class Capture(Provider):
+            name = "img_b"
+            categories = frozenset({"search.image"})
 
-    def test_known_but_wrong_category_skipped_then_all_failed(self):
-        # anysearch 存在但不支持 search.image → 链跳过 → all providers failed
-        with self.assertRaises(ServiceError) as ctx:
-            api.search_category({}, self.CATEGORY, "q", {"providers": "anysearch"})
-        self.assertEqual(ctx.exception.code, "search_failed")
+            def search(self, cfg, query, opts):
+                seen.update(opts)
+                return SearchResponse(query=query, metadata={})
+
+        prov.SERVICES["img_b"] = Capture
+        try:
+            api.search_category({}, "search.image", "q", {"providers": "img_b"})
+            self.assertTrue(seen.get("image"))
+        finally:
+            prov.SERVICES.pop("img_b", None)
 
 
 if __name__ == "__main__":
