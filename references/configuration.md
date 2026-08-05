@@ -24,7 +24,6 @@
 | `doubao` | `providers.doubao.api_key`，或 `providers.doubao.ak` + `providers.doubao.sk` | `search web` 回退链跳过 doubao（anysearch 匿名兜底）；`search image` 不可用 |
 | `anysearch` | 无 | 可用（匿名模式，按 IP 限速）；配 `providers.anysearch.api_key` 可提高配额 |
 | `deepseek` | `providers.deepseek.api_key` | `search web` 回退链跳过 deepseek |
-| `openalex` / `arxiv` / `crossref` | 无 | 全免费免凭证（OpenAlex 可选配 `providers.openalex.mailto` 进礼貌池） |
 | `markdown_new` / `jina_reader` / `anysearch` / `firecrawl` | 无 | URL 抓取全免费免 Token；firecrawl/jina/anysearch 配 key 提高限速；anysearch 仅 HTML、50K 截断（firecrawl 兜底全文） |
 | `mineru` | 无 | 走 v1 轻量（≤10MB/20 页）；配 `providers.mineru.api_key` 自动升级 v4 Precision API |
 | `anydoc` | 无 | 本地文档解析（需 `pip install firecrawl-anydoc`，见安装说明）；未安装自动跳过（纯文本/HTML 不需库） |
@@ -51,10 +50,6 @@
 | `providers.deepseek.model` | `deepseek-v4-flash` | 模型 |
 | `providers.deepseek.thinking` | `enabled` | 思考模式 `enabled`/`disabled`（enabled 更准但更慢更贵） |
 | `providers.deepseek.max_tokens` | 32768 | 最大输出 token 数 |
-| `providers.openalex.mailto` | 空 | OpenAlex 礼貌池邮箱（推荐填，提升限流配额） |
-| `providers.openalex.timeout` | 30 | openalex 请求超时（秒） |
-| `providers.arxiv.timeout` | 30 | arxiv 请求超时（秒） |
-| `providers.crossref.timeout` | 30 | crossref 请求超时（秒） |
 | `providers.firecrawl.api_key` | 空 | 可选，提高 firecrawl 限速 |
 | `providers.jina_reader.api_key` | 空 | 可选，提高 jina 限速（无 key 约 20 RPM） |
 | `providers.markdown_new.timeout` | 30 | markdown.new 超时（秒） |
@@ -70,11 +65,9 @@
 | `search.web.timeout` | 30 | 网页搜索默认超时（秒） |
 | `search.image.providers` | `doubao` | 图片搜索回退链 |
 | `search.image.timeout` | 30 | 图片搜索默认超时（秒） |
-| `search.paper.providers` | `openalex,arxiv,crossref` | 论文搜索源列表（逗号分隔；并行搜全部源并去重合并） |
-| `search.paper.timeout` | 30 | 论文搜索默认超时（秒） |
 | `search.data.providers` | `anysearch` | 专业数据源回退链 |
 | `search.data.timeout` | 30 | 专业数据源默认超时（秒） |
-| `convert.page.providers` | `markdown_new,jina_reader,anysearch,firecrawl` | URL → Markdown 抓取链（免费优先，按序尝试） |
+| `convert.page.providers` | `markdown_new,jina_reader,anysearch,tavily,firecrawl` | URL → Markdown 抓取链（免费优先，tavily 兜底反爬站，按序尝试） |
 | `convert.page.timeout` | 30 | URL 抓取默认超时（秒） |
 | `convert.file.providers` | `anydoc,markdown_new,mineru` | 文件 → Markdown 转换链（本地解析优先；MinerU 支持扫描 PDF/图片 OCR，异步轮询较慢） |
 | `convert.file.timeout` | 60 | 文件转换默认超时（秒） |
@@ -87,4 +80,3 @@
 - anysearch 匿名按 IP 限速
 - deepseek 每次约 8k–15k token
 - jina 无 key 约 20 RPM
-- openalex 免费无 key；配 mailto 进礼貌池后配额更高（10 万次/天量级）

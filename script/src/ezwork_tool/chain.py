@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 from .base import FetchResult, ProviderOpts, SearchResponse
@@ -42,8 +41,14 @@ def run_chain(
 ) -> Optional[tuple]:
     """按序尝试。``invoke(service)`` 返回结果或抛 ServiceError。
 
+    质量门协作：结果若标记 ``low_quality``（内容可疑，如拦截页残留），
+    不视为成功——记为后备后继续尝试下一个 provider；全部失败/低质时
+    返回**第一个**低质后备（调用方应警告用户）。SearchResponse 无该
+    字段，搜索链行为不受影响。
+
     返回 ``(result, provider_name)``；全部失败 / 未知 provider 返回 None。
     """
+    backup: Optional[tuple] = None
     for name in names:
         try:
             svc = create_service(name, opts)
@@ -64,53 +69,21 @@ def run_chain(
             continue
 
         elapsed = round(time.monotonic() - t0, 3)
+        if getattr(result, "low_quality", False):
+            reason = getattr(result, "quality_reason", "") or "low quality"
+            log(f"[{name}] suspicious ({reason}, {_size(result)}) -> keep as backup")
+            if backup is None:
+                backup = (result, name)
+            continue
+
         log(f"[{name}] OK ({elapsed}s, {_size(result)})")
         return result, name
 
+    if backup is not None:
+        log("all providers failed or suspicious; returning best backup")
+        return backup
     log("all providers failed")
     return None
-
-
-def run_fanout(
-    names: list[str],
-    category: str,
-    invoke: Callable,
-    opts: ProviderOpts | None = None,
-    log: LogFn = _stderr,
-) -> list[tuple[str, Any]]:
-    """并行执行所有 provider（fan-out），互不中断、不失败回退。
-
-    与 run_chain 语义相同（create_service 失败 / 无该类别 / ServiceError
-    都只 log 后继续），但**不中断**：每个 name 各自 try，成败互不影响。
-    返回成功结果列表，**保持 names 传入顺序**（``ex.map`` 天然保序）：
-    ``[(name, result), ...]``；全部失败返回空列表。
-    """
-    def _run(name: str):
-        try:
-            svc = create_service(name, opts)
-        except ServiceError as e:  # unknown provider — 单独失败，不影响其他
-            log(f"[{name}] failed: {e}")
-            return None
-
-        if category not in svc.categories:
-            log(f"[{name}] skipped: no '{category}'")
-            return None
-
-        t0 = time.monotonic()
-        try:
-            result = invoke(svc)
-        except ServiceError as e:
-            elapsed = round(time.monotonic() - t0, 3)
-            log(f"[{name}] failed: {e} ({elapsed}s)")
-            return None
-
-        elapsed = round(time.monotonic() - t0, 3)
-        log(f"[{name}] OK ({elapsed}s, {_size(result)})")
-        return result
-
-    with ThreadPoolExecutor(max_workers=len(names) or 1) as ex:
-        results = list(ex.map(_run, names))
-    return [(name, r) for name, r in zip(names, results) if r is not None]
 
 
 def fetch_chain(

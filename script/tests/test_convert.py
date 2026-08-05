@@ -257,6 +257,76 @@ class TestConvertEntry(unittest.TestCase):
         self.assertEqual(names, ["jina_reader"])
 
 
+class TestRunChainQualityGate(unittest.TestCase):
+    """质量门与回退链协作：low_quality 结果不立即返回，继续尝试；全低质返回后备。"""
+
+    def _make_service(self, name: str, result=None, error=None):
+        svc = mock.MagicMock()
+        svc.name = name
+        svc.categories = {"convert.page"}
+        if error is not None:
+            svc.fetch.side_effect = error
+        else:
+            svc.fetch.return_value = result
+        return svc
+
+    def _fetch_result(self, content: str, low: bool = False, reason: str = ""):
+        return pmod.FetchResult(
+            provider="x", content=content, url="https://example.com/a",
+            elapsed=0.1, low_quality=low, quality_reason=reason,
+        )
+
+    @mock.patch("ezwork_tool.chain.create_service")
+    def test_low_quality_continues_to_next_provider(self, create_service):
+        svc1 = self._make_service("a", result=self._fetch_result("可疑", low=True, reason="captcha"))
+        svc2 = self._make_service("b", result=self._fetch_result("# 真内容"))
+        create_service.side_effect = [svc1, svc2]
+        logs: list[str] = []
+        result = chainmod.run_chain(["a", "b"], "convert.page",
+                                    lambda s: s.fetch("https://example.com/a", 30),
+                                    log=logs.append)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1], "b")
+        self.assertEqual(result[0].content, "# 真内容")
+        self.assertTrue(any("suspicious" in l and "backup" in l for l in logs))
+
+    @mock.patch("ezwork_tool.chain.create_service")
+    def test_all_low_quality_returns_backup(self, create_service):
+        svc1 = self._make_service("a", result=self._fetch_result("可疑A", low=True, reason="captcha"))
+        svc2 = self._make_service("b", result=self._fetch_result("可疑B", low=True, reason="环境异常"))
+        create_service.side_effect = [svc1, svc2]
+        logs: list[str] = []
+        result = chainmod.run_chain(["a", "b"], "convert.page",
+                                    lambda s: s.fetch("https://example.com/a", 30),
+                                    log=logs.append)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1], "a")  # 第一个后备
+        self.assertEqual(result[0].content, "可疑A")
+        self.assertTrue(any("best backup" in l for l in logs))
+
+    @mock.patch("ezwork_tool.chain.create_service")
+    def test_low_quality_backup_after_failures(self, create_service):
+        svc1 = self._make_service("a", result=self._fetch_result("可疑A", low=True, reason="captcha"))
+        svc2 = self._make_service("b", error=pmod.ServiceError("boom", pmod.CATEGORY_HTTP))
+        create_service.side_effect = [svc1, svc2]
+        logs: list[str] = []
+        result = chainmod.run_chain(["a", "b"], "convert.page",
+                                    lambda s: s.fetch("https://example.com/a", 30),
+                                    log=logs.append)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1], "a")
+
+    @mock.patch("ezwork_tool.chain.create_service")
+    def test_ok_result_still_returns_immediately(self, create_service):
+        svc1 = self._make_service("a", result=self._fetch_result("# 正常"))
+        svc2 = self._make_service("b", result=self._fetch_result("# 不该被调用"))
+        create_service.side_effect = [svc1, svc2]
+        result = chainmod.run_chain(["a", "b"], "convert.page",
+                                    lambda s: s.fetch("https://example.com/a", 30))
+        self.assertEqual(result[1], "a")
+        self.assertFalse(svc2.fetch.called)
+
+
 def _mcp_response(payload: dict) -> tuple:
     """MCP 成功响应三元组（http_post 返回形态）。"""
     return (200, {}, json.dumps(payload).encode("utf-8"))

@@ -30,6 +30,7 @@ from ..errors import (
     UsageError,
 )
 from ..http import http_post
+from ..quality import checked_text
 from ..registry import register
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
@@ -408,7 +409,9 @@ class AnySearchProvider(Provider):
             raise ServiceError(
                 f"{self.name} returned empty content", CATEGORY_EMPTY
             )
+        low_quality, reason = checked_text(self.name, md)
         return FetchResult(
             provider=self.name, content=md, url=url,
             elapsed=round(time.monotonic() - t0, 3),
+            low_quality=low_quality, quality_reason=reason,
         )

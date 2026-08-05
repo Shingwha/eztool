@@ -13,6 +13,7 @@ CATEGORY_TIMEOUT = "timeout"
 CATEGORY_NETWORK = "network"
 CATEGORY_HTTP = "http"
 CATEGORY_EMPTY = "empty"
+CATEGORY_BLOCKED = "blocked"  # 内容疑似拦截/验证页（假成功拦截）
 CATEGORY_INVALID = "invalid"
 CATEGORY_AUTH = "auth"
 CATEGORY_NO_RESULTS = "no_results"

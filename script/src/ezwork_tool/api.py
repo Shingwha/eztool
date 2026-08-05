@@ -1,11 +1,10 @@
 """公共入口：search_category（按类别路由搜索）/ convert（按输入类型路由转换）。
 
 统一配置（``providers.<name>`` 段 + ``search.<类别>`` / ``convert.<类别>`` 段）
-→ ProviderOpts → 统一回退链 / fan-out。类别是路由单元：回退链候选来自
+→ ProviderOpts → 统一回退链。类别是路由单元：回退链候选来自
 registry.CATEGORIES，命令参数按类别归属——参数与后端错配从模型上消失。
 
-- search.paper：三源并行 fan-out（openalex+arxiv+crossref，合并去重）；
-- 其余 search.* 类别：回退链（第一个成功即返回，失败自动换下一个）；
+- 所有 search.* 类别：回退链（第一个成功即返回，失败自动换下一个）；
 - convert：http(s):// → convert.page 链；本地路径 → convert.file 链。
 """
 
@@ -16,8 +15,8 @@ import sys
 from urllib.parse import urlparse
 
 from . import config as cfgmod
-from .base import FetchResult, ProviderOpts, SearchResponse, SearchResult
-from .chain import run_chain, run_fanout
+from .base import FetchResult, ProviderOpts, SearchResponse
+from .chain import run_chain
 from .errors import (
     CATEGORY_ALL_FAILED,
     ServiceError,
@@ -142,11 +141,7 @@ def search_category(
     cfg: dict, category: str, query: str, opts: dict | None = None,
 ) -> SearchResponse:
     """按类别路由搜索。category 决定回退链与参数面（providers_for 校验类别）。"""
-    providers_for(category)  # 未知类别 → ServiceError(CATEGORY_INVALID)
     opts = dict(opts or {})
-    if category == "search.paper":
-        return _paper(cfg, query, opts)
-
     section = _section(cfg, category)
     popts = _provider_opts(cfg, section)
     names = _chain_providers(section, opts, providers_for(category))
@@ -172,92 +167,6 @@ def search_category(
         resp.metadata = {}
     resp.metadata.setdefault("backend", name)
     return resp
-
-
-def _paper(cfg: dict, query: str, opts: dict) -> SearchResponse:
-    """论文搜索：默认并发搜 openalex + arxiv + crossref，合并去重。
-
-    opts 键：providers（逗号分隔，覆盖 search.paper.providers 配置）、count、
-    timeout、year、author、sort（relevance/cited/date）、oa。
-    """
-    section = _section(cfg, "search.paper")
-    popts = _provider_opts(cfg, section)
-    names = _chain_providers(section, opts, providers_for("search.paper"))
-    _check_provider_names(names)
-    return _search_fanout(cfg, names, query, opts, popts)
-
-
-def _search_fanout(
-    cfg: dict, names: list[str], query: str, opts: dict, popts: ProviderOpts,
-) -> SearchResponse:
-    """fan-out 搜索：并行搜全部 names，合并去重；全部失败抛错。"""
-    reasons: list[str] = []
-    paired = run_fanout(
-        names, "search.paper",
-        lambda svc: svc.search(cfg, query, opts),
-        popts, log=_log_collector(reasons),
-    )
-    if not paired:
-        detail = "; ".join(reasons) or f"providers={names}"
-        raise ServiceError(
-            f"all providers failed: {detail}", CATEGORY_ALL_FAILED,
-            code="search_failed",
-        )
-    return _merge_search(paired, sort=opts.get("sort"))
-
-
-def _merge_search(paired: list[tuple[str, SearchResponse]], sort: str | None = None) -> SearchResponse:
-    """多源结果合并去重（fan-out 汇总）。
-
-    paired 已按 provider 顺序排列（来自 run_fanout）。去重 key 优先级：
-    ``extra["doi"]``（小写）→ ``url``（去尾斜杠、小写）→ 归一化 title
-    （小写、压缩空白）。有 key 才去重，first wins（先到的保留）。
-    保留的结果回填 ``source``。排序：None=保持 provider 分组顺序；
-    "cited"=按 citations 降序；"date"=按 year 降序。
-    """
-    seen: set = set()
-    merged: list[SearchResult] = []
-    per_provider: dict[str, int] = {}
-    query = ""
-    for name, resp in paired:
-        per_provider[name] = len(resp.results)
-        if not query:
-            query = resp.query
-        for r in resp.results:
-            key = None
-            extra = r.extra or {}
-            doi = extra.get("doi")
-            if doi:
-                key = ("doi", str(doi).lower())
-            elif r.url:
-                key = ("url", r.url.rstrip("/").lower())
-            elif r.title:
-                key = ("title", " ".join(r.title.lower().split()))
-            if key is None:
-                merged.append(r)
-            elif key not in seen:
-                seen.add(key)
-                merged.append(r)
-            else:
-                continue  # 重复，丢弃（first wins）
-            r.source = name
-
-    if sort == "cited":
-        merged.sort(key=lambda r: (r.extra or {}).get("citations", 0), reverse=True)
-    elif sort == "date":
-        merged.sort(key=lambda r: (r.extra or {}).get("year", 0), reverse=True)
-
-    names = [name for name, _ in paired]
-    return SearchResponse(
-        query=query,
-        results=merged,
-        metadata={
-            "backend": ",".join(names),
-            "total_results": len(merged),
-            "per_provider": per_provider,
-            "search_time_ms": 0,
-        },
-    )
 
 
 # ── convert ────────────────────────────────────────────────────────────────
@@ -295,7 +204,14 @@ def convert(cfg: dict, target: str, opts: dict | None = None) -> FetchResult:
             f"all providers failed: {detail}", CATEGORY_ALL_FAILED,
             code="convert_failed",
         )
-    return result[0]
+    fetched, _ = result
+    if getattr(fetched, "low_quality", False):
+        print(
+            f"warning: 内容可疑（命中拦截话术: {fetched.quality_reason or 'unknown'}），"
+            f"可能不完整；可换 provider 重试（--providers ...）",
+            file=sys.stderr,
+        )
+    return fetched
 
 
 # ── 列表 ───────────────────────────────────────────────────────────────────

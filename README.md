@@ -1,6 +1,6 @@
 # ezwork-tool
 
-统一 CLI：**搜索**（`search web` / `search image` / `search paper` / `search data`，覆盖 Doubao / AnySearch / DeepSeek / OpenAlex / arXiv / Crossref 11 个 provider）+ **转换**（`convert`，URL 或本地文件 → Markdown）+ **配置**（`config`）。
+统一 CLI：**搜索**（`search web` / `search image` / `search data`，覆盖 Doubao / AnySearch / DeepSeek / Tavily / Exa 等 10 个 provider）+ **转换**（`convert`，URL 或本地文件 → Markdown）+ **配置**（`config`）。
 一个工具、一个 skill（`SKILL.md` 即 skill，repo 即 skill）。零依赖、纯 Python 标准库。
 
 替代：`doubao-websearch` / `anysearch` / `deepseek-ws` / `ezwork-fetch` 四个独立 CLI。
@@ -8,11 +8,9 @@
 ```bash
 eztool search web "Rust async 2026"              # 通用搜索（doubao→anysearch→deepseek 回退链）
 eztool search image "猫" --width-min 800          # 图片搜索（直链 + 尺寸/形状元数据）
-eztool search paper "vision transformer"         # 论文搜索：openalex+arxiv+crossref 三源并行汇总
-eztool search paper "LLM reasoning" --year 2024 --sort cited --oa
 eztool search data "AAPL" --tag finance.quote    # 专业数据源（anysearch）
 eztool search tags                               # 数据源标签目录（40+）
-eztool convert https://example.com/article       # URL → Markdown（markdown_new→jina_reader→anysearch→firecrawl）
+eztool convert https://example.com/article       # URL → Markdown（markdown_new→jina_reader→anysearch→tavily→firecrawl）
 eztool convert report.pdf --out report.md        # 本地文件 → Markdown（anydoc→markdown_new→mineru）
 eztool config test                               # 验证凭证
 ```
@@ -23,7 +21,7 @@ eztool config test                               # 验证凭证
 |---|---|
 | [`SKILL.md`](SKILL.md) | 核心使用指引（什么时候用 / 命令速查 / Workflow / 扩展指南） |
 | [`references/configuration.md`](references/configuration.md) | 全部配置项、配置命令、限流配额 |
-| [`references/backends.md`](references/backends.md) | provider 类别声明总表、参数归属、论文搜索细节 |
+| [`references/backends.md`](references/backends.md) | provider 类别声明总表、参数归属、输出格式 |
 | [`references/development.md`](references/development.md) | 安装 / 测试 / 更新 / 架构 |
 | [`script/`](script/) | 全部代码（pyproject + src + tests） |
 

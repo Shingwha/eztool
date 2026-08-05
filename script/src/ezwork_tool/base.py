@@ -6,7 +6,7 @@
 即可被 CLI / 回退链 / 配置消费。
 
 类别（category）是路由与参数归属的最小单元，命名 ``<域>.<操作>``：
-``search.web`` / ``search.image`` / ``search.paper`` / ``search.data`` /
+``search.web`` / ``search.image`` / ``search.data`` /
 ``convert.page`` / ``convert.file``。回退链按类别过滤，命令参数按类别归属，
 三者由同一张注册表（registry.CATEGORIES）驱动。
 """
@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .errors import (  # re-export：provider 实现与测试从本模块拿全套
+    CATEGORY_BLOCKED,
     CATEGORY_EMPTY,
     CATEGORY_HTTP,
     CATEGORY_INVALID,
@@ -31,13 +32,14 @@ from .http import (  # re-export
     ensure_ascii,
     http_get,
 )
+from .quality import assess_content, checked_text
 
 __all__ = [
-    "CATEGORY_EMPTY", "CATEGORY_HTTP", "CATEGORY_INVALID", "CATEGORY_NETWORK",
-    "CATEGORY_TIMEOUT", "ServiceError",
+    "CATEGORY_BLOCKED", "CATEGORY_EMPTY", "CATEGORY_HTTP", "CATEGORY_INVALID",
+    "CATEGORY_NETWORK", "CATEGORY_TIMEOUT", "ServiceError",
     "USER_AGENT", "build_multipart", "ensure_ascii", "http_get",
     "FetchResult", "ProviderOpts", "SearchResult", "SearchResponse",
-    "ParamSpec", "Provider",
+    "ParamSpec", "Provider", "assess_content",
 ]
 
 
@@ -50,6 +52,8 @@ class FetchResult:
     url: str  # original requested URL
     elapsed: float  # seconds
     tokens: Optional[int] = None  # from x-markdown-tokens header, if present
+    low_quality: bool = False  # 内容可疑（命中拦截话术且偏短）：链应继续尝试更好结果
+    quality_reason: str = ""    # 可疑原因（命中的拦截词等，供 log / 警告）
 
 
 @dataclass
@@ -196,6 +200,9 @@ class Provider:
         if not text:
             raise ServiceError(f"{self.name} returned empty content", CATEGORY_EMPTY)
 
+        # 质量门：拦截"假成功"（HTTP 200 + 非空但实为反爬/验证页）
+        low_quality, reason = checked_text(self.name, text)
+
         tokens = None
         raw = headers.get("x-markdown-tokens")
         if raw and raw.isdigit():
@@ -203,4 +210,5 @@ class Provider:
         return FetchResult(
             provider=self.name, content=text, url=url,
             elapsed=round(time.monotonic() - t0, 3), tokens=tokens,
+            low_quality=low_quality, quality_reason=reason,
         )

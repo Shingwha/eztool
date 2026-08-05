@@ -1,7 +1,7 @@
 """统一服务商注册表：类别（category）即路由单元，一个注册点。
 
 类别是路由与参数归属的最小单元，命名 ``<域>.<操作>``（search.web /
-search.image / search.paper / search.data / convert.page / convert.file）。
+search.image / search.data / convert.page / convert.file）。
 服务商类声明 ``name`` + ``categories`` + ``category_params``，``@register``
 登记；CLI 子命令生成、回退链过滤、参数面、凭证检查、``--list-providers``
 全部只消费本注册表——新增类别 / 新增 provider 不再改动任何公共代码。
@@ -32,7 +32,6 @@ RESERVED_PARAM_NAMES = frozenset({
     "command", "search_cmd", "config_cmd",   # subparser dest
     "func", "category",                      # set_defaults 注入（默认值非 None，最危险）
     "query", "providers", "count", "timeout",
-    "year", "author", "sort", "oa",
     "target", "out", "list_providers",
     "key", "value", "version",
 })

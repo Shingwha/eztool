@@ -34,6 +34,7 @@ from ..errors import (
     ServiceError,
 )
 from ..http import http_get, http_post, map_http_error
+from ..quality import checked_text
 from ..registry import register
 
 BASE_URL = "https://mineru.net"
@@ -91,8 +92,13 @@ class MinerUProvider(Provider):
         the service and the chain moves on.
         """
         if self._v4:
-            return self._fetch_v4(url, timeout)
-        return self._fetch_v1(url, timeout)
+            result = self._fetch_v4(url, timeout)
+        else:
+            result = self._fetch_v1(url, timeout)
+        # 质量门：拦截"假成功"（远程 URL 提取返回拦截页/异常文档）
+        low, reason = checked_text(self.name, result.content)
+        result.low_quality, result.quality_reason = low, reason
+        return result
 
     # -- v1: Agent Lightweight API (no token) -------------------------------
 

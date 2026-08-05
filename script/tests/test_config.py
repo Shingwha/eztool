@@ -49,11 +49,9 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(cfg["search"]["web"]["providers"],
                          ["doubao", "anysearch", "deepseek"])
         self.assertEqual(cfg["search"]["image"]["providers"], ["doubao"])
-        self.assertEqual(cfg["search"]["paper"]["providers"],
-                         ["openalex", "arxiv", "crossref"])
         self.assertEqual(cfg["search"]["data"]["providers"], ["anysearch"])
         self.assertEqual(cfg["convert"]["page"]["providers"],
-                         ["markdown_new", "jina_reader", "anysearch", "firecrawl"])
+                         ["markdown_new", "jina_reader", "anysearch", "tavily", "firecrawl"])
         self.assertEqual(cfg["convert"]["file"]["providers"],
                          ["anydoc", "markdown_new", "mineru"])
         self.assertEqual(cfg["providers"]["deepseek"]["thinking"], "enabled")

@@ -1,8 +1,8 @@
 """eztool 统一配置：~/.config/ezwork-tool/config.json。
 
 两层结构：``providers.<name>`` 段放各服务商凭证/超时；``search.<类别>`` /
-``convert.<类别>`` 段（search.web / search.image / search.paper /
-search.data / convert.page / convert.file）放类别回退链与缺省超时。
+``convert.<类别>`` 段（search.web / search.image / search.data /
+convert.page / convert.file）放类别回退链与缺省超时。
 类别段 ``providers`` 缺省 = 该类别的注册顺序（registry），显式配置则覆盖。
 """
 
@@ -32,9 +32,6 @@ DEFAULTS: dict[str, Any] = {
         "jina_reader": {"api_key": None, "timeout": 10},
         "mineru": {"api_key": None, "timeout": 300},
         "anydoc": {"timeout": 60},
-        "openalex": {"mailto": None, "timeout": 30},
-        "arxiv": {"timeout": 30},
-        "crossref": {"timeout": 30},
         "tavily": {"api_key": None, "timeout": 30},
         "exa": {"api_key": None, "timeout": 30},
     },
@@ -42,12 +39,11 @@ DEFAULTS: dict[str, Any] = {
     "search": {
         "web": {"providers": ["doubao", "anysearch", "deepseek"], "timeout": 30},
         "image": {"providers": ["doubao"], "timeout": 30},
-        "paper": {"providers": ["openalex", "arxiv", "crossref"], "timeout": 30},
         "data": {"providers": ["anysearch"], "timeout": 30},
     },
-    # 转换类别段：page=URL 抓取（免费优先），file=本地文件（本地解析优先）
+    # 转换类别段：page=URL 抓取（免费优先，tavily 兜底反爬站），file=本地文件（本地解析优先）
     "convert": {
-        "page": {"providers": ["markdown_new", "jina_reader", "anysearch", "firecrawl"], "timeout": 30},
+        "page": {"providers": ["markdown_new", "jina_reader", "anysearch", "tavily", "firecrawl"], "timeout": 30},
         "file": {"providers": ["anydoc", "markdown_new", "mineru"], "timeout": 60},
     },
 }
@@ -87,24 +83,18 @@ KEY_HINTS = {
     "providers.jina_reader.timeout": "jina 超时秒数",
     "providers.mineru.api_key": "MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML）；不配走 v1 轻量 API（≤10MB/20页）",
     "providers.mineru.timeout": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）",
-    "providers.openalex.mailto": "OpenAlex 礼貌池邮箱（推荐填写，提升限流配额）",
-    "providers.openalex.timeout": "openalex 请求超时秒数",
-    "providers.arxiv.timeout": "arxiv 请求超时秒数",
     "providers.tavily.api_key": "Tavily API Key（不配则自动走 keyless 免费模式）",
     "providers.tavily.timeout": "tavily 请求超时秒数",
     "providers.exa.api_key": "Exa API Key（https://dashboard.exa.ai）",
     "providers.exa.timeout": "exa 请求超时秒数",
-    "providers.crossref.timeout": "crossref 请求超时秒数",
     "providers.anydoc.timeout": "anydoc 本地解析超时秒数",
     "search.web.providers": "网页搜索回退链，逗号分隔：doubao,anysearch,deepseek",
     "search.web.timeout": "网页搜索默认超时秒数",
     "search.image.providers": "图片搜索回退链，逗号分隔：doubao",
     "search.image.timeout": "图片搜索默认超时秒数",
-    "search.paper.providers": "论文搜索源列表，逗号分隔（默认 openalex,arxiv,crossref）",
-    "search.paper.timeout": "论文搜索默认超时秒数",
     "search.data.providers": "专业数据源回退链，逗号分隔：anysearch",
     "search.data.timeout": "专业数据源搜索默认超时秒数",
-    "convert.page.providers": "URL → Markdown 抓取链，逗号分隔（免费优先）：markdown_new,jina_reader,anysearch,firecrawl",
+    "convert.page.providers": "URL → Markdown 抓取链，逗号分隔（免费优先，tavily 兜底反爬站）：markdown_new,jina_reader,anysearch,tavily,firecrawl",
     "convert.page.timeout": "URL 抓取默认超时秒数",
     "convert.file.providers": "文件 → Markdown 转换链，逗号分隔（本地解析优先）：anydoc,markdown_new,mineru",
     "convert.file.timeout": "文件转换默认超时秒数",

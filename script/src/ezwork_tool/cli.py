@@ -1,4 +1,4 @@
-"""eztool 统一入口：search（web/image/paper/data/tags）+ convert + config。
+"""eztool 统一入口：search（web/image/data/tags）+ convert + config。
 
 命令面 = 域（顶层 3 个）+ 子命令（搜索类别）：search 子命令由注册表的
 ``search_categories()`` 自动生成，每个子命令的参数面 = 类别共享参数（§4.5
@@ -18,7 +18,7 @@ from . import __version__
 from . import api
 from . import config as cfgmod
 from .errors import EztoolError, UsageError
-from .formatter import format_data, format_image, format_paper, format_search, format_tags
+from .formatter import format_data, format_image, format_search, format_tags
 from .providers.anysearch import KNOWN_TAGS
 from .registry import category_params, create_service, search_categories, service_names
 
@@ -26,12 +26,11 @@ from .registry import category_params, create_service, search_categories, servic
 _CATEGORY_HELP = {
     "search.web": "通用网页搜索",
     "search.image": "图片搜索（直链 + 尺寸/形状元数据）",
-    "search.paper": "论文搜索（三源并行汇总 openalex+arxiv+crossref）",
     "search.data": "专业数据源搜索（--tag 定向数据源）",
 }
 
 # search 子命令的类别共享参数（§4.5 适用性矩阵）
-_COUNT_CATEGORIES = {"search.web", "search.image", "search.paper", "search.data"}
+_COUNT_CATEGORIES = {"search.web", "search.image", "search.data"}
 
 
 def _add_param(parser: argparse.ArgumentParser, pname: str, spec) -> None:
@@ -51,13 +50,13 @@ def _add_param(parser: argparse.ArgumentParser, pname: str, spec) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="eztool",
-        description="搜索（web/image/paper/data/tags）+ 转换（URL 或本地文件 → Markdown）+ 配置。一个命令完成搜索、读取与转格式。",
+        description="搜索（web/image/data/tags）+ 转换（URL 或本地文件 → Markdown）+ 配置。一个命令完成搜索、读取与转格式。",
     )
     p.add_argument("--version", action="version", version=f"eztool {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
     # ── search 域：子命令由注册表 search_categories() 自动生成 ──
-    sp = sub.add_parser("search", help="搜索域：web / image / paper / data / tags")
+    sp = sub.add_parser("search", help="搜索域：web / image / data / tags")
     ssub = sp.add_subparsers(dest="search_cmd", required=True)
     for category in search_categories():
         name = category.split(".")[1]
@@ -68,13 +67,6 @@ def build_parser() -> argparse.ArgumentParser:
             csp.add_argument("--count", type=int, default=None, help="结果条数")
         csp.add_argument("--timeout", type=int, default=None,
                          help="请求超时秒数（覆盖配置）")
-        if category == "search.paper":
-            csp.add_argument("--year", metavar="YEAR",
-                             help="出版年份或区间，如 2023 或 2020-2024")
-            csp.add_argument("--author", metavar="NAME", help="作者名过滤")
-            csp.add_argument("--sort", choices=("relevance", "cited", "date"),
-                             help="排序：relevance（默认）/cited（候选内按引用数）/date（候选内按年份）")
-            csp.add_argument("--oa", action="store_true", help="仅开放获取论文")
         for pname, spec in category_params(category).items():
             _add_param(csp, pname, spec)
         csp.set_defaults(func=cmd_search, category=category)
@@ -124,9 +116,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         if v is not None:
             opts[k] = v
     resp = api.search_category(cfg, args.category, args.query, opts)
-    if args.category == "search.paper":
-        print(format_paper(resp))
-    elif args.category == "search.image":
+    if args.category == "search.image":
         print(format_image(resp))
     elif args.category == "search.data":
         print(format_data(resp))

@@ -28,7 +28,7 @@ class TestCommandTree(unittest.TestCase):
 
     def test_search_subcommands_include_core(self):
         ssubs = _subparsers(self.subs["search"])
-        self.assertLessEqual({"web", "image", "paper", "data", "tags"}, set(ssubs))
+        self.assertLessEqual({"web", "image", "data", "tags"}, set(ssubs))
 
     def test_web_params(self):
         """search web 只有全局参数（provider 无特有参数，与既有 provider 一致）。"""
@@ -40,11 +40,6 @@ class TestCommandTree(unittest.TestCase):
         self.assertLessEqual({"query", "providers", "count", "timeout",
                               "width_min", "width_max", "height_min",
                               "height_max", "shapes"}, _args(image))
-
-    def test_paper_params_command_specific(self):
-        paper = _subparsers(self.subs["search"])["paper"]
-        self.assertLessEqual({"year", "author", "sort", "oa"}, _args(paper))
-        self.assertNotIn("full", _args(paper))
 
     def test_data_params_include_tag(self):
         data = _subparsers(self.subs["search"])["data"]
@@ -73,8 +68,6 @@ class TestCommandTree(unittest.TestCase):
             self.p.parse_args(["search", "web", "q", "--image"])
         with self.assertRaises(SystemExit):
             self.p.parse_args(["paper", "q"])
-        with self.assertRaises(SystemExit):
-            self.p.parse_args(["search", "paper", "q", "--backend", "x"])
 
     def test_parse_image_subcommand(self):
         ns = self.p.parse_args(["search", "image", "猫", "--width-min", "100", "--shapes", "方形"])
@@ -117,13 +110,13 @@ class TestCmdSearch(unittest.TestCase):
             cli.cmd_search(args)
             fmt.assert_called_once()
 
-    def test_paper_dispatches_format_paper(self):
-        resp = SearchResponse(query="q", metadata={"backend": "openalex"})
+    def test_data_dispatches_format_data(self):
+        resp = SearchResponse(query="q", metadata={"backend": "anysearch"})
         with mock.patch.object(api, "search_category", return_value=resp), \
-             mock.patch("ezwork_tool.cli.format_paper", return_value="ok") as fmt:
-            args = argparse.Namespace(category="search.paper", query="q",
+             mock.patch("ezwork_tool.cli.format_data", return_value="ok") as fmt:
+            args = argparse.Namespace(category="search.data", query="q",
                                       count=None, timeout=None, providers=None,
-                                      year=None, author=None, sort=None, oa=False)
+                                      tag=None, params=None)
             cli.cmd_search(args)
             fmt.assert_called_once()
 

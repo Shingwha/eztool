@@ -6,23 +6,20 @@ To add a new service: drop a module here that subclasses Provider with
 from __future__ import annotations
 
 from . import (  # noqa: F401  (side-effect: register)
+    anydoc,
     anysearch,
-    arxiv,
-    crossref,
     deepseek,
     doubao,
-    exa,          # ← 新增
+    exa,
     firecrawl,
     jina_reader,
     markdown_new,
     mineru,
-    openalex,
-    anydoc,
-    tavily,       # ← 新增
+    tavily,
 )
 
 __all__ = [
-    "anysearch", "arxiv", "crossref", "deepseek", "doubao",
+    "anydoc", "anysearch", "deepseek", "doubao",
     "exa", "firecrawl", "jina_reader", "markdown_new", "mineru",
-    "openalex", "anydoc", "tavily",
+    "tavily",
 ]

@@ -115,12 +115,11 @@ class TestLookups(unittest.TestCase):
         self._orig = {c: list(v) for c, v in CATEGORIES.items()}
         self._orig_public = {c: dict(v) for c, v in PUBLIC_PARAMS.items()}
         CATEGORIES.clear()
-        SERVICES["look_a"] = _make("look_a", {"search.web", "search.paper"},
+        SERVICES["look_a"] = _make("look_a", {"search.web"},
                                    {"search.web": {"foo": ParamSpec()}})
         SERVICES["look_b"] = _make("look_b", {"search.web"},
                                    {"search.web": {"bar": ParamSpec(type=int)}})
         CATEGORIES["search.web"] = ["look_a", "look_b"]
-        CATEGORIES["search.paper"] = ["look_a"]
 
     def tearDown(self):
         CATEGORIES.clear()
@@ -155,7 +154,7 @@ class TestLookups(unittest.TestCase):
         self.assertEqual(params[2:], [])  # 当前无公共参数
 
     def test_search_categories_sorted(self):
-        self.assertEqual(search_categories(), ["search.paper", "search.web"])
+        self.assertEqual(search_categories(), ["search.web"])
 
     def test_convert_service_lists(self):
         SERVICES["look_c"] = _make("look_c", {"convert.page", "convert.file"})
