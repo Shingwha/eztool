@@ -8,8 +8,8 @@ Two API tiers behind one provider, selected automatically by token:
     output is a zip (Markdown + JSON). Formats: pdf, doc/docx, ppt/pptx,
     xls/xlsx, images, html (html needs model MinerU-HTML).
 
-Configure ``mineru.api_key`` (convert.mineru.api_key / fetch.mineru.api_key)
-to enable v4; without a token the provider falls back to v1.
+Configure ``providers.mineru.api_key`` to enable v4; without a token the
+provider falls back to v1.
 
 Async flow (both tiers): submit task → (signed PUT upload) → poll status →
 download result (v1: markdown_url; v4: zip → extract full.md).
@@ -25,7 +25,7 @@ import time
 import urllib.request
 import zipfile
 
-from ..provider import FetchResult, Provider
+from ..provider import FetchResult, Provider, post_json, register
 from ..util import (
     CATEGORY_EMPTY,
     CATEGORY_HTTP,
@@ -33,9 +33,7 @@ from ..util import (
     CATEGORY_TIMEOUT,
     ServiceError,
 )
-from ..util import http_get, http_post, map_http_error
-from ..util import checked_text
-from ..provider import register
+from ..util import http_get, map_http_error
 
 BASE_URL = "https://mineru.net"
 V1_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -59,14 +57,14 @@ _INVALID_CODES = {-30001, -30002, -30003, -30004, -500, -10002}
 @register
 class MinerUProvider(Provider):
     name = "mineru"
-    categories = frozenset({"convert.page", "convert.file"})
+    categories = frozenset({"page", "file"})
     # 无 token 走 v1 免费轻量 API（限流）；配了 token 走 v4 Precision（更全）
     config = {
-        "api_key": {"secret": True, "hint": "MinerU Token（可选）：配了走 v4 Precision API（≤200MB/200页/批量/HTML）；不配走 v1 轻量 API（≤10MB/20页）"},
-        "timeout": {"default": 300, "hint": "MinerU 提取任务总超时秒数（异步提交+轮询，默认 300）"},
+        "api_key": {"secret": True, "hint": "MinerU token (optional): set for v4 Precision API (≤200MB/200 pages/batch/HTML); unset for v1 lightweight API (≤10MB/20 pages)"},
+        "timeout": {"default": 300, "hint": "MinerU extract task total timeout in seconds (async submit + polling, default 300)"},
     }
-    priority = {"convert.file": 30}
-    # convert.page 不声明 priority → 不进 URL 抓取默认链
+    priority = {"file": 30}
+    # page 不声明 priority → 不进 URL 抓取默认链
 
     @property
     def _v4(self) -> bool:
@@ -99,13 +97,8 @@ class MinerUProvider(Provider):
         the service and the chain moves on.
         """
         if self._v4:
-            result = self._fetch_v4(url, timeout)
-        else:
-            result = self._fetch_v1(url, timeout)
-        # 质量门：拦截"假成功"（远程 URL 提取返回拦截页/异常文档）
-        low, reason = checked_text(self.name, result.content)
-        result.low_quality, result.quality_reason = low, reason
-        return result
+            return self._fetch_v4(url, timeout)
+        return self._fetch_v1(url, timeout)
 
     # -- v1: Agent Lightweight API (no token) -------------------------------
 
@@ -274,8 +267,7 @@ class MinerUProvider(Provider):
 
     def _post_json(self, target: str, payload: dict, timeout: int):
         """POST JSON body; returns (status, headers, body bytes)."""
-        headers = {"Content-Type": "application/json", **self._auth_headers()}
-        return http_post(target, headers, json.dumps(payload).encode("utf-8"), timeout)
+        return post_json(target, self._auth_headers(), payload, timeout)
 
     def _get_json(self, target: str, timeout: float) -> bytes:
         """Authorized GET (Bearer when v4); returns raw body bytes."""
@@ -365,7 +357,11 @@ class MinerUProvider(Provider):
         """Download a Markdown text URL (v1 CDN result)."""
         if not md_url:
             raise ServiceError(f"{self.name} task done but no markdown_url", CATEGORY_EMPTY)
-        status, _, body = self._http_get(md_url, timeout=min(60, timeout))
+        status, _, body = http_get(md_url, self.build_headers(), min(60, timeout))
+        if status != 200:
+            raise ServiceError(
+                f"{self.name} download failed: HTTP {status}", CATEGORY_HTTP, status
+            )
         text = body.decode("utf-8", errors="replace").strip()
         if not text:
             raise ServiceError(f"{self.name} returned empty content", CATEGORY_EMPTY)
@@ -375,7 +371,11 @@ class MinerUProvider(Provider):
         """Download the v4 result zip and extract the full.md Markdown."""
         if not zip_url:
             raise ServiceError(f"{self.name} task done but no full_zip_url", CATEGORY_EMPTY)
-        status, _, body = self._http_get(zip_url, timeout=min(120, timeout))
+        status, _, body = http_get(zip_url, self.build_headers(), min(120, timeout))
+        if status != 200:
+            raise ServiceError(
+                f"{self.name} download failed: HTTP {status}", CATEGORY_HTTP, status
+            )
         try:
             with zipfile.ZipFile(io.BytesIO(body)) as zf:
                 names = [n for n in zf.namelist() if n.endswith("full.md")]

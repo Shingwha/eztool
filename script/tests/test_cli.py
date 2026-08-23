@@ -1,121 +1,108 @@
-"""CLI 命令面测试：子命令结构、参数面、--list-providers、config 子命令。"""
+"""CLI 命令面：argparse 结构、互斥组、入口校验、main() 退出码、config show 脱敏。"""
 
-import io
-import unittest
-from contextlib import redirect_stdout, redirect_stderr
+import pytest
 
-from ezwork_tool import cli
+from eztool import cli
+from eztool.util import CATEGORY_HTTP, ServiceError
 
-
-class TestParserStructure(unittest.TestCase):
-    def test_commands(self):
-        p = cli.build_parser()
-        subs = {a.dest: a for a in p._actions if a.dest == "command"}
-        parser = subs["command"]
-        self.assertEqual(set(parser.choices), {"search", "convert", "config"})
-
-    def test_search_subcommands(self):
-        p = cli.build_parser()
-        search = next(a for a in p._actions
-                      if getattr(a, "dest", None) == "command").choices["search"]
-        ssub = next(a for a in search._actions if a.dest == "search_cmd")
-        self.assertEqual(set(ssub.choices), {"web", "image", "data", "tags"})
-
-    def test_search_web_params(self):
-        p = cli.build_parser()
-        web = self._search_sub("web")
-        opts = [a.dest for a in web._actions]
-        for want in ("query", "count", "timeout", "providers", "list_providers"):
-            self.assertIn(want, opts)
-
-    def test_search_image_has_doubao_params(self):
-        img = self._search_sub("image")
-        opts = {a.dest: a for a in img._actions}
-        for want in ("width_min", "width_max", "shapes"):
-            self.assertIn(want, opts)
-
-    def test_search_data_has_anysearch_params(self):
-        data = self._search_sub("data")
-        opts = {a.dest: a for a in data._actions}
-        self.assertIn("tag", opts)
-        self.assertIn("params", opts)
-
-    def test_config_subcommands(self):
-        p = cli.build_parser()
-        config = next(a for a in p._actions
-                      if getattr(a, "dest", None) == "command").choices["config"]
-        csub = next(a for a in config._actions if a.dest == "config_cmd")
-        self.assertEqual(set(csub.choices),
-                         {"show", "set", "get", "reset", "test", "clear"})
-
-    def _search_sub(self, name):
-        p = cli.build_parser()
-        search = next(a for a in p._actions
-                      if getattr(a, "dest", None) == "command").choices["search"]
-        ssub = next(a for a in search._actions if a.dest == "search_cmd")
-        return ssub.choices[name]
+from conftest import make_search_provider
 
 
-class TestListProviders(unittest.TestCase):
-    def test_convert_list(self):
-        out = io.StringIO()
-        with redirect_stdout(out):
-            cli.main(["convert", "--list-providers"])
-        text = out.getvalue()
-        self.assertIn("convert.page", text)
-        self.assertIn("convert.file", text)
-        self.assertIn("markdown_new", text)
-        self.assertIn("anydoc", text)
-
-    def test_search_list(self):
-        out = io.StringIO()
-        with redirect_stdout(out):
-            cli.main(["search", "web", "q", "--list-providers"])
-        text = out.getvalue()
-        self.assertIn("search.web", text)
-        self.assertIn("doubao", text)
+def parse(argv):
+    return cli.build_parser().parse_args(argv)
 
 
-class TestExitCodes(unittest.TestCase):
-    def test_usage_error_exit_2(self):
-        err = io.StringIO()
-        with self.assertRaises(SystemExit) as ctx, redirect_stderr(err):
-            cli.main(["convert"])  # 缺 target
-        self.assertEqual(ctx.exception.code, 2)
+class TestParserStructure:
+    def test_five_subcommands_exist(self):
+        # 用 func 默认值验证子命令注册（--help 会触发 SystemExit，故不用它探测）
+        assert parse(["search", "q"]).func is cli.cmd_search
+        assert parse(["sources"]).func is cli.cmd_sources
+        assert parse(["fetch", "https://x/"]).func is cli.cmd_fetch
+        assert parse(["convert", "a.txt"]).func is cli.cmd_convert
 
-    def test_unknown_config_key(self):
-        err = io.StringIO()
-        with self.assertRaises(SystemExit) as ctx, redirect_stderr(err):
-            cli.main(["config", "get", "no.such.key"])
-        self.assertEqual(ctx.exception.code, 2)
+    def test_config_six_actions(self):
+        assert parse(["config", "show"]).func is cli.cmd_config_show
+        assert parse(["config", "set", "k", "v"]).func is cli.cmd_config_set
+        assert parse(["config", "get", "k"]).func is cli.cmd_config_get
+        assert parse(["config", "reset", "k"]).func is cli.cmd_config_reset
+        assert parse(["config", "test"]).func is cli.cmd_config_test
+        assert parse(["config", "clear"]).func is cli.cmd_config_clear
 
-    def test_unknown_provider_param_not_crash(self):
-        # 未知 provider 名（显式）→ UsageError → exit 2
-        err = io.StringIO()
-        with self.assertRaises(SystemExit) as ctx, redirect_stderr(err):
-            cli.main(["search", "web", "q", "--providers", "ghost"])
-        self.assertEqual(ctx.exception.code, 2)
+    def test_search_mode_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            parse(["search", "q", "--image", "--source", "finance.quote"])
 
+    def test_search_breadth_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            parse(["search", "q", "--all", "--use", "doubao"])
 
-class TestConfigCommands(unittest.TestCase):
-    def test_show_lists_generated_keys(self):
-        out = io.StringIO()
-        with redirect_stdout(out):
-            cli.main(["config", "show"])
-        text = out.getvalue()
-        self.assertIn("config file:", text)
-        self.assertIn("providers.doubao.api_key", text)
-        self.assertIn("search.web.providers", text)
-
-    def test_show_masks_secrets(self):
-        out = io.StringIO()
-        with redirect_stdout(out):
-            cli.main(["config", "show"])
-        text = out.getvalue()
-        for line in text.splitlines():
-            if line.startswith("providers.doubao.api_key ="):
-                self.assertNotIn("K83ZyzR2q1BsI6SRC7z4dw5rXfrc6kCh", line)
+    def test_image_params_present(self):
+        args = parse(["search", "q", "--image", "--width-min", "100",
+                      "--height-max", "200", "--shapes", "方形"])
+        assert args.image is True
+        assert args.width_min == 100 and args.height_max == 200
+        assert args.shapes == "方形"
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestEntryValidation:
+    """fetch/convert 的目标类型校验：走 main() 断言退出码 2。"""
+
+    def test_fetch_rejects_local_path(self, isolated_config, capsys):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["fetch", "README.md"])
+        assert exc.value.code == 2
+        assert "convert" in capsys.readouterr().err
+
+    def test_convert_rejects_url(self, isolated_config, capsys):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["convert", "https://example.com/a.pdf"])
+        assert exc.value.code == 2
+        assert "fetch" in capsys.readouterr().err
+
+    def test_fetch_missing_target(self, isolated_config):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["fetch"])
+        assert exc.value.code == 2
+
+
+class TestMainExitCodes:
+    def test_usage_error_exit_2(self, isolated_config):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["search", "q", "--use", "nope"])
+        assert exc.value.code == 2
+
+    def test_service_error_exit_1(self, isolated_config, capsys):
+        make_search_provider("fake_fail",
+                             fail_with=ServiceError("boom", CATEGORY_HTTP))
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["search", "q", "--use", "fake_fail"])
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "error:" in err and "search_failed" in err
+
+    def test_keyboard_interrupt_exit_130(self, isolated_config):
+        make_search_provider("fake_kbd", fail_with=KeyboardInterrupt())
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["search", "q", "--use", "fake_kbd"])
+        assert exc.value.code == 130
+
+
+class TestConfigShow:
+    def test_show_has_three_sections_and_masks_secrets(self, isolated_config, capsys):
+        cli.main(["config", "set", "providers.doubao.api_key", "abcd1234wxyz"])
+        capsys.readouterr()  # 丢掉 set 的输出
+        cli.main(["config", "show"])
+        out = capsys.readouterr().out
+        assert "settings.timeout = 30" in out
+        assert "chains.web = " in out
+        assert "providers.doubao.api_key = abcd****wxyz" in out
+        assert "abcd1234wxyz" not in out  # 原始 secret 不泄露
+
+    def test_get_masks_secret_and_set_unknown_key(self, isolated_config, capsys):
+        cli.main(["config", "set", "providers.doubao.api_key", "abcd1234wxyz"])
+        capsys.readouterr()
+        cli.main(["config", "get", "providers.doubao.api_key"])
+        assert capsys.readouterr().out.strip() == "abcd****wxyz"
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["config", "set", "no.such.key", "v"])
+        assert exc.value.code == 2

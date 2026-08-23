@@ -61,7 +61,7 @@ class ServiceError(EztoolError):
         return self.category not in NON_RETRIABLE
 
     def __str__(self) -> str:  # compact one-line form for chain stderr logs
-        if self.http_code is not None:
+        if self.http_code is not None and f"HTTP {self.http_code}" not in self.message:
             return f"{self.message} (HTTP {self.http_code})"
         return self.message
 
@@ -90,7 +90,7 @@ class NoResultsError(ServiceError):
 
 # ── HTTP ───────────────────────────────────────────────────────────────────
 
-USER_AGENT = "Mozilla/5.0 (compatible; ezwork-fetch/0.1)"
+USER_AGENT = "Mozilla/5.0 (compatible; eztool/0.3)"
 
 
 def http_get(target: str, headers: dict, timeout: int):
@@ -105,6 +105,17 @@ def http_post(target: str, headers: dict, data: bytes, timeout: int):
     for k, v in headers.items():
         req.add_header(k, v)
     return _urlopen(req, timeout)
+
+
+def post_json(target: str, headers: dict, payload, timeout: int):
+    """POST JSON 到 ``target``；返回 (status, headers, body bytes)。
+
+    收敛各 provider 的「序列化 + Content-Type + POST」样板；错误同样走
+    ``map_http_error`` 映射为 ServiceError。
+    """
+    data = json.dumps(payload).encode("utf-8")
+    h = {"Content-Type": "application/json", **(headers or {})}
+    return http_post(target, h, data, timeout)
 
 
 def _urlopen(req, timeout: int):
@@ -125,8 +136,13 @@ def map_http_error(e: Exception, timeout: int) -> ServiceError:
         detail = ""
         try:
             payload = json.loads(e.read().decode("utf-8", "replace"))
-            if isinstance(payload, dict) and payload.get("error"):
-                detail = f": {payload['error']}"
+            if isinstance(payload, dict):
+                # 常见错误信封：{"error": ...} / {"msg": ...} / {"error": {"message": ...}}
+                val = payload.get("error") or payload.get("msg") or payload.get("message")
+                if isinstance(val, dict):
+                    val = val.get("message") or val.get("msg")
+                if val:
+                    detail = f": {val}"
         except Exception:
             pass
         return ServiceError(
@@ -181,7 +197,7 @@ def build_multipart(
 
     返回 ``(body, content-type header value)``。文件转换类 provider 共用。
     """
-    boundary = "----ezwork" + uuid.uuid4().hex
+    boundary = "----eztool" + uuid.uuid4().hex
     head = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'

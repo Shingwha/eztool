@@ -1,52 +1,88 @@
-# ezwork-tool
+# eztool
 
-统一 CLI：**搜索**（`search web` / `search image` / `search data`，覆盖 Doubao / AnySearch / DeepSeek / Tavily / Exa 等 10 个 provider）+ **转换**（`convert`，URL 或本地文件 → Markdown）+ **配置**（`config`）。
-一个工具、一个 skill（`SKILL.md` 即 skill，repo 即 skill）。零依赖、纯 Python 标准库。
+Unified CLI: **search** (`eztool search` — web / image / 40 specialized data
+sources across 10 providers: Doubao, AnySearch, DeepSeek, Tavily, Exa…) +
+**fetch** (URL → Markdown) + **convert** (local file → Markdown) + **config**.
+One tool, one skill (`SKILL.md` is the skill; the repo is the skill).
+Zero dependencies, pure Python stdlib.
 
-替代：`doubao-websearch` / `anysearch` / `deepseek-ws` / `ezwork-fetch` 四个独立 CLI。
+Replaces four standalone CLIs: `doubao-websearch` / `anysearch` / `deepseek-ws` /
+`ezwork-fetch`.
 
 ```bash
-eztool search web "Rust async 2026"       # 通用搜索（doubao→anysearch→deepseek 回退链）
-eztool search image "猫" --width-min 800     # 图片搜索（直链 + 尺寸/形状元数据）
-eztool search data "AAPL" --tag finance.quote  # 专业数据源（anysearch）
-eztool search tags                # 数据源标签目录（40+）
-eztool convert https://example.com/article    # URL → Markdown（markdown_new→jina_reader→anysearch→tavily→firecrawl）
-eztool convert report.pdf --out report.md    # 本地文件 → Markdown（anydoc→markdown_new→mineru）
-eztool config test                # 验证凭证
+eztool search "Rust async 2026"           # web search (doubao→anysearch→deepseek fallback chain)
+eztool search "cats" --image --width-min 800   # image search (direct links + size/shape metadata)
+eztool search "AAPL" --source finance.quote --params '{"type":"quote"}'  # data source (anysearch, 40 tags)
+eztool search "LLM agents" --all          # whole default chain in parallel + merge/dedup
+eztool sources                            # data source tag catalog
+eztool fetch https://example.com/article  # URL → Markdown (markdown_new→jina_reader→anysearch→tavily→firecrawl)
+eztool convert report.pdf --out report.md # local file → Markdown (anydoc→markdown_new→mineru)
+eztool config test                        # verify credentials
 ```
 
-## 文档导航
+## Docs
 
-| 文档 | 内容 |
+| Doc | Contents |
 |---|---|
-| [`SKILL.md`](SKILL.md) | 核心使用指引（什么时候用 / 命令速查 / Workflow / 扩展指南） |
-| [`script/`](script/) | 全部代码（pyproject + src + tests） |
+| [`SKILL.md`](SKILL.md) | Core usage guide (when to use / command cheat sheet / workflow) |
+| [`references/guide.md`](references/guide.md) | User guide: configuration, credentials, chains, timeouts, exit codes, troubleshooting |
+| [`script/`](script/) | All code (pyproject + src + tests) |
 
-## 安装
-
-```bash
-cd script && uv tool install .           # 基础安装
-uv tool install ".[local]"             # 可选：本地文档解析（firecrawl-anydoc，14 格式）
-eztool --help
-```
-
-## 快速配置
-
-```bash
-eztool config set providers.doubao.api_key   # 豆包/火山 WebSearch 凭证（或 ak+sk）
-eztool config set providers.deepseek.api_key  # DeepSeek key（可选）
-eztool config set providers.anysearch.api_key # AnySearch key（可选，匿名可用）
-eztool config test          # 验证凭证
-```
-
-配置存于 `~/.config/ezwork-tool/config.json`（`eztool config show` 首行显示路径）。
-
-## 开发
+## Install
 
 ```bash
 cd script
-PYTHONPATH=src python -m ezwork_tool.cli --help  # 免安装运行
-PYTHONPATH=src python -m unittest discover tests -q  # 测试
+uv tool install .              # base install
+uv tool install -e .           # editable install for development
+uv tool install ".[local]"     # optional: local document parsing (firecrawl-anydoc, 14 formats)
+eztool --help
 ```
+
+## Quick config
+
+```bash
+eztool config set providers.doubao.api_key    # Doubao/Volcengine WebSearch (or ak+sk)
+eztool config set providers.deepseek.api_key  # DeepSeek key (optional)
+eztool config set providers.anysearch.api_key # AnySearch key (optional, works anonymously)
+eztool config test                            # verify credentials
+```
+
+Config lives at `~/.config/eztool/config.json` — full key table, chain tuning
+and troubleshooting: [`references/guide.md`](references/guide.md).
+
+## Development
+
+Architecture: `util` (errors/HTTP/quality gate) → `provider` (base class +
+registry) → `providers/` (implementations) → `api` (routing + chains) →
+`format` → `cli`.
+
+```
+script/src/eztool/
+├── util.py       # exception taxonomy + HTTP helpers + content quality gate
+├── provider.py   # Provider base class + metadata declarations + registry (SERVICES)
+├── providers/    # 10 provider implementations; __init__.py is the only registration point
+├── api.py        # category routing + chain/parallel execution + quality gate
+├── format.py     # output formatting (Markdown)
+├── config.py     # config I/O; DEFAULTS/SECRET_KEYS/KEY_HINTS generated from metadata
+└── cli.py        # argparse command surface + dispatch
+```
+
+**Adding a provider, two steps**: ① write `providers/foo.py` (a class declaring
+`name`/`categories`/`config`/`params`/`priority`/`auth_required`/`sources` plus
+the capability methods); ② add one import line to `providers/__init__.py`.
+Config keys, CLI params, default chains, `config show`, `sources` and
+`--list-providers` all appear automatically — a new config key or param touches
+only the provider file.
+
+```bash
+cd script
+uv run python -m eztool.cli --help   # run without installing
+uv run --group dev pytest -q         # tests (107 cases, fully mocked, zero network)
+uv tool install ".[local]" --force --reinstall   # reinstall after changes
+```
+
+Tests live in `script/tests/` (registry / chains / quality gate / config / CLI /
+format / per-provider protocol details); `conftest.py` provides fakes and mocks
+so nothing touches the network.
 
 MIT License

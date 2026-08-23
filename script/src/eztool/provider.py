@@ -1,10 +1,13 @@
-"""Provider 基类 + 注册表 + 元数据聚合（合并自 base/registry）。
+"""Provider 基类 + 注册表 + 元数据聚合。
 
 每个 provider 文件 = 一个模块，内含：实现类 + 元数据声明（config 配置键 /
-params CLI 参数面 / priority 默认链排序 / auth_required 凭证要求）。
-注册点收敛在 ``providers/__init__.py`` 的显式 import 列表——没 import 的
-模块不注册，新增 provider = 写一个文件 + 加一行 import，其余（config 键、
-CLI 参数、默认链、config show）全部自动出现。
+params CLI 参数面 / priority 默认链排序 / auth_required 凭证要求 / sources
+数据源标签）。注册点收敛在 ``providers/__init__.py`` 的显式 import 列表——
+没 import 的模块不注册，新增 provider = 写一个文件 + 加一行 import，其余
+（config 键、CLI 参数、默认链、config show、sources 清单）全部自动出现。
+
+类别（category）是五个短名：``web`` / ``image`` / ``data``（search 域）+
+``page`` / ``file``（convert 域），与配置 ``chains.<类别>`` 键同名。
 """
 
 from __future__ import annotations
@@ -23,19 +26,24 @@ from .util import (  # re-export：provider 实现与测试从本模块拿全套
     ServiceError,
     USER_AGENT,
     build_multipart,
-    checked_text,
     ensure_ascii,
     http_get,
+    post_json,
 )
 
 __all__ = [
     "CATEGORY_BLOCKED", "CATEGORY_EMPTY", "CATEGORY_HTTP", "CATEGORY_INVALID",
     "CATEGORY_NETWORK", "CATEGORY_TIMEOUT", "ServiceError",
-    "USER_AGENT", "build_multipart", "checked_text", "ensure_ascii", "http_get",
+    "USER_AGENT", "build_multipart", "ensure_ascii", "http_get", "post_json",
     "FetchResult", "ProviderOpts", "SearchResult", "SearchResponse",
     "ParamSpec", "Provider", "register", "SERVICES", "providers_for",
-    "category_params", "default_chain", "provider_config_map",
+    "category_params", "default_chain", "provider_config_map", "all_sources",
+    "SEARCH_CATEGORIES", "CONVERT_CATEGORIES",
 ]
+
+# 类别全集：search 域 + convert 域（与 chains.* 配置键同名）
+SEARCH_CATEGORIES = ("web", "image", "data")
+CONVERT_CATEGORIES = ("page", "file")
 
 
 @dataclass
@@ -44,19 +52,25 @@ class FetchResult:
 
     provider: str
     content: str
-    url: str  # original requested URL
+    url: str  # original requested URL or local path
     elapsed: float  # seconds
     tokens: Optional[int] = None  # from x-markdown-tokens header, if present
-    low_quality: bool = False  # 内容可疑（命中拦截话术且偏短）：链应继续尝试更好结果
-    quality_reason: str = ""    # 可疑原因（命中的拦截词等，供 log / 警告）
 
 
 @dataclass
 class ProviderOpts:
-    """Per-provider options resolved from config (keys are provider names)."""
+    """config 解析后的 per-provider 选项（键都是 provider 名）。
+
+    凭证与 provider 私有配置的**唯一来源**——provider 实现不再读原始 cfg：
+
+    - ``timeouts[name]``：该 provider 的生效超时（api 层已按
+      ``--timeout > providers.<name>.timeout > settings.timeout`` 解析）。
+    - ``configs[name]``：``providers.<name>`` 段去掉 timeout、去掉 None 后
+      的完整配置小包（api_key / ak / sk / model / max_results …）。
+    """
 
     timeouts: dict = field(default_factory=dict)
-    api_keys: dict = field(default_factory=dict)
+    configs: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -98,15 +112,16 @@ class ParamSpec:
 class Provider:
     """服务商基类。子类声明元数据 + 实现对应能力方法。
 
-    - ``categories``：支持哪些类别（search.web / search.image / search.data /
-      convert.page / convert.file），回退链据此过滤。
+    - ``categories``：支持哪些类别（web/image/data/page/file），回退链据此过滤。
     - ``params``：``{类别: {参数名: ParamSpec}}``，CLI 参数面自动并入。
     - ``config``：``{配置键: {default, secret, hint}}``（相对 providers.<name>
       段），自动生成 DEFAULTS / SECRET_KEYS / KEY_HINTS——加配置键只改这里。
     - ``priority``：``{类别: 排序值}``，默认回退链按此排序（小在前）。不声明
-      的类别 = 不进默认链（如 exa），用户可 --providers 显式指定或配置链。
+      的类别 = 不进默认链（如 exa），用户可 --use 显式指定或配置链。
     - ``auth_required``：True = 必须有凭证才能用（默认链会跳过未配凭证的）；
       False = 匿名可用（限流），永远进链。
+    - ``sources``：数据源标签 ``[(tag, 描述)]``（如 anysearch），
+      ``eztool sources`` 由注册表聚合输出。
     """
 
     name: str = ""
@@ -115,23 +130,25 @@ class Provider:
     config: dict[str, dict[str, Any]] = {}
     priority: dict[str, int] = {}
     auth_required: bool = False
+    sources: list[tuple[str, str]] = []
     base_url: str = ""
 
     def __init__(self, opts: ProviderOpts | None = None) -> None:
         self.opts = opts or ProviderOpts()
-        self.api_key = (self.opts.api_keys or {}).get(self.name)
+        self.cfg: dict = (self.opts.configs or {}).get(self.name, {})
+        self.api_key = self.cfg.get("api_key")
 
     # -- search 能力（默认不支持）-------------------------------------------
 
-    def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
-        """执行搜索。cfg 为统一配置（providers.<name> 段读凭证）。"""
+    def search(self, category: str, query: str, opts: dict) -> SearchResponse:
+        """执行搜索。``category`` 为 web/image/data（图片模式等据此切换）。"""
         raise ServiceError(f"{self.name} does not support search", CATEGORY_INVALID)
 
-    def has_credentials(self, cfg: dict) -> bool:
+    def has_credentials(self) -> bool:
         """是否已配置凭证（config test / 链凭证过滤用）。默认看 api_key。"""
         return bool(self.api_key)
 
-    def test_credentials(self, cfg: dict) -> str:
+    def test_credentials(self) -> str:
         """发最小请求验证凭证/连通性，返回描述字符串，失败抛异常。"""
         raise ServiceError(f"{self.name} has no credential check", CATEGORY_INVALID)
 
@@ -143,7 +160,7 @@ class Provider:
             f"{self.name} does not support file conversion", CATEGORY_INVALID
         )
 
-    # -- fetch 能力 ---------------------------------------------------------
+    # -- fetch 能力 ----------------------------------------------------------
 
     def build_headers(self) -> dict:
         return {"User-Agent": USER_AGENT, "Accept": "text/markdown"}
@@ -152,7 +169,8 @@ class Provider:
         """Compose the service endpoint for a URL（非 ASCII 自动百分号编码）。"""
         return self.base_url + ensure_ascii(url).lstrip("/")
 
-    def timeout(self, default: int) -> int:
+    def timeout(self, default: int = 30) -> int:
+        """生效超时：api 层解析后注入；未注入时回落 default。"""
         return int((self.opts.timeouts or {}).get(self.name, default))
 
     def parse_body(self, status: int, headers, body: bytes) -> str:
@@ -167,15 +185,12 @@ class Provider:
         """
         return http_get(target, self.build_headers(), timeout)
 
-    def _http_get(self, target: str, timeout: int):
-        """GET with the provider's own headers; (status, headers, body bytes)."""
-        return http_get(target, self.build_headers(), timeout)
-
     def fetch(self, url: str, timeout: int = 30) -> FetchResult:
         """Fetch ``url`` through this provider. Returns markdown text.
 
         Wraps all unexpected errors into ``ServiceError`` (network category)
-        so the chain / parallel fan-out never crashes.
+        so the chain never crashes. 内容质量门（拦截页/可疑内容）由 api
+        执行层统一判定，provider 只负责返回原始内容。
         """
         t0 = time.monotonic()
         try:
@@ -193,9 +208,6 @@ class Provider:
         if not text:
             raise ServiceError(f"{self.name} returned empty content", CATEGORY_EMPTY)
 
-        # 质量门：拦截"假成功"（HTTP 200 + 非空但实为反爬/验证页）
-        low_quality, reason = checked_text(self.name, text)
-
         tokens = None
         raw = headers.get("x-markdown-tokens")
         if raw and raw.isdigit():
@@ -203,12 +215,10 @@ class Provider:
         return FetchResult(
             provider=self.name, content=text, url=url,
             elapsed=round(time.monotonic() - t0, 3), tokens=tokens,
-            low_quality=low_quality, quality_reason=reason,
         )
 
 
-# ── 注册表 ─────────────────────────────────────────────────────────────────
-
+# ── 注册表 ──────────────────────────────────────────────────────────────────
 SERVICES: dict[str, type[Provider]] = {}
 
 
@@ -244,14 +254,13 @@ def category_params(category: str) -> dict[str, ParamSpec]:
 def default_chain(category: str) -> list[str]:
     """该类别的默认回退链：按 priority 排序（未声明 priority 的 provider 不进链）。
 
-    等价于旧 config.py 硬编码的 ``search.web.providers`` 等默认值——现在
     由 provider 声明自动派生，新增 provider 声明 priority 即自动进链。
     """
     ranked = []
     for name in providers_for(category):
         prio = (SERVICES[name].priority or {}).get(category)
         if prio is None:
-            continue  # 不进默认链（如 exa），可 --providers 显式指定
+            continue  # 不进默认链（如 exa），可 --use 显式指定
         ranked.append((prio, name))
     return [name for _, name in sorted(ranked)]
 
@@ -271,4 +280,12 @@ def provider_config_map() -> dict[str, dict[str, dict[str, Any]]]:
             entry.setdefault("secret", False)
             entry.setdefault("hint", "")
             out[name][key] = entry
+    return out
+
+
+def all_sources() -> list[tuple[str, str]]:
+    """全部 provider 声明的数据源标签聚合（``eztool sources`` 输出）。"""
+    out: list[tuple[str, str]] = []
+    for cls in SERVICES.values():
+        out.extend(cls.sources or [])
     return out

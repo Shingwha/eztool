@@ -6,12 +6,12 @@
 
 纯标准库（hmac/hashlib/urllib 实现 V4 签名），无外部依赖。
 从 doubao-websearch-cli 的 api.py 移植：签名与请求逻辑原样保留，CLI/配置管理不搬
-（凭证统一走 ezwork_tool.config 的 doubao 段）。
+（凭证统一走 providers.doubao 配置段，经 ProviderOpts.configs 注入 self.cfg）。
 
 对外接口（eztool 主程序依赖）：
-- has_credentials(cfg) -> bool
-- test_credentials(cfg) -> str
-- search(cfg, query, opts) -> SearchResponse
+- has_credentials() -> bool
+- test_credentials() -> str
+- search(category, query, opts) -> SearchResponse
 """
 
 from __future__ import annotations
@@ -21,20 +21,23 @@ import hashlib
 import hmac
 import json
 import time
-import urllib.error
-import urllib.request
 from typing import Any
 from urllib.parse import quote
 
-from ..provider import ParamSpec, Provider, SearchResponse, SearchResult
+from ..provider import (
+    ParamSpec,
+    Provider,
+    SearchResponse,
+    SearchResult,
+    post_json,
+    register,
+)
 from ..util import (
     CATEGORY_HTTP,
-    CATEGORY_NETWORK,
     CredentialsError,
     NoResultsError,
     ServiceError,
 )
-from ..provider import register
 
 # --- Endpoint constants ------------------------------------------------------
 
@@ -50,7 +53,7 @@ AKSK_REGION = "cn-north-1"
 AKSK_HOST = "mercury.volcengineapi.com"
 AKSK_CONTENT_TYPE = "application/json"
 
-MISSING_CRED_HINT = "未配置 doubao 凭证，请运行 eztool config set doubao.api_key"
+MISSING_CRED_HINT = "doubao credentials not configured; run: eztool config set providers.doubao.api_key"
 
 # --- Volcengine AK/SK request signing（原样保留）----------------------------
 
@@ -86,6 +89,7 @@ def sign_and_send_aksk(method: str, query: dict, body: dict,
     default separators) so that the bytes hashed for ``X-Content-Sha256`` are
     byte-identical to the bytes sent on the wire — the server verifies the
     signature against the request body, so the two must match exactly.
+    ``post_json`` 同样用默认 ``json.dumps`` 序列化，字节一致，签名不受影响。
     """
     x_date = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     short_x_date = x_date[:8]
@@ -132,26 +136,16 @@ def sign_and_send_aksk(method: str, query: dict, body: dict,
     }
 
     url = f"https://{AKSK_HOST}/?{_norm_query(full_query)}"
-    return _do_request(url, headers, body_str, timeout)
+    return _do_request(url, headers, body, timeout)
 
 
-# --- HTTP + response parsing（错误统一转 ServiceError）-------------------------
+# --- HTTP + response parsing（传输走 post_json，业务错误仍自行解析）------------
 
 
-def _do_request(url: str, headers: dict, body_str: str, timeout: float) -> dict:
-    data = body_str.encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8")
-            status = resp.status
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8", errors="replace")
-        return _parse_response(raw, status=e.code)
-    except urllib.error.URLError as e:
-        raise ServiceError(
-            f"网络请求失败: {e.reason}", CATEGORY_NETWORK, code="network_error") from None
-    return _parse_response(raw, status=status)
+def _do_request(url: str, headers: dict, payload: dict, timeout: float) -> dict:
+    """POST JSON（网络/HTTP 错误由 post_json 映射为 ServiceError）+ 业务错误解析。"""
+    status, _resp_headers, body = post_json(url, headers, payload, timeout)
+    return _parse_response(body.decode("utf-8", "replace"), status=status)
 
 
 def _parse_response(raw: str, status: int | None = None) -> dict:
@@ -159,7 +153,7 @@ def _parse_response(raw: str, status: int | None = None) -> dict:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         raise ServiceError(
-            f"非 JSON 响应 (HTTP {status}): {raw[:200]}", CATEGORY_HTTP,
+            f"non-JSON response (HTTP {status}): {raw[:200]}", CATEGORY_HTTP,
             code="bad_response") from None
 
     meta = payload.get("ResponseMetadata") or {}
@@ -176,11 +170,7 @@ def _parse_response(raw: str, status: int | None = None) -> dict:
     return payload
 
 
-# --- Credential resolution（只读 cfg["doubao"]）-------------------------------
-
-
-def _doubao_cfg(cfg: dict) -> dict:
-    return cfg.get("providers", {}).get("doubao") or {}
+# --- Credential resolution（只读 self.cfg，即 providers.doubao 段）-------------
 
 
 def _pick_auth(d: dict) -> str:
@@ -191,7 +181,7 @@ def _pick_auth(d: dict) -> str:
     if auth:
         if auth not in ("apikey", "aksk"):
             raise CredentialsError(
-                f"无效鉴权方式 '{auth}'，请用 'apikey' 或 'aksk'", code="invalid_auth")
+                f"invalid auth method '{auth}'; use 'apikey' or 'aksk'", code="invalid_auth")
         return auth
     if api_key:
         return "apikey"
@@ -207,32 +197,21 @@ def _resolve_creds(d: dict) -> tuple[str, str, str]:
         api_key = d.get("api_key")
         if not api_key:
             raise CredentialsError(
-                "已选 apikey 鉴权但 doubao.api_key 为空", code="missing_credentials")
+                "auth 'apikey' selected but providers.doubao.api_key is empty",
+                code="missing_credentials")
         return method, api_key, ""
     ak, sk = d.get("ak"), d.get("sk")
     if not (ak and sk):
         raise CredentialsError(
-            "已选 aksk 鉴权但 doubao.ak / doubao.sk 未配置", code="missing_credentials")
+            "auth 'aksk' selected but providers.doubao.ak / providers.doubao.sk "
+            "are not configured",
+            code="missing_credentials")
     return method, ak, sk
-
-
-def _has_credentials(cfg: dict) -> bool:
-    """doubao 段有 api_key（Bearer）或有 ak+sk（签名）即 True。"""
-    d = _doubao_cfg(cfg)
-    return bool(d.get("api_key")) or (bool(d.get("ak")) and bool(d.get("sk")))
-
-
-def _test_credentials(cfg: dict) -> str:
-    """发一个最小搜索请求验证凭证，成功返回状态描述（如 "OK (0.4s)"）。"""
-    t0 = time.monotonic()
-    _request(cfg, "ping", {"count": 1, "timeout": 15})
-    elapsed = time.monotonic() - t0
-    return f"OK ({elapsed:.1f}s)"
 
 
 # --- opts 合并规则 -----------------------------------------------------------
 # 布尔项：仅当 opts 显式 True 才覆盖配置（False/None 不覆盖，配置优先）；
-# 字符串/整型项：opts 非 None 才覆盖配置；否则取 cfg["doubao"] 对应键。
+# 字符串/整型项：opts 非 None 才覆盖配置；否则取 self.cfg 对应键。
 
 def _opt_bool(opts: dict, d: dict, key: str, default: bool = False) -> bool:
     v = opts.get(key)
@@ -315,23 +294,6 @@ def _build_body(query: str, opts: dict, d: dict, image: bool) -> dict:
     return body
 
 
-def _request(cfg: dict, query: str, opts: dict) -> dict:
-    """凭据解析 + body 构造 + 发送请求（apikey 或 aksk），返回原始 payload。"""
-    d = _doubao_cfg(cfg)
-    method, key1, key2 = _resolve_creds(d)
-    timeout = opts.get("timeout")
-    if timeout is None:
-        timeout = d.get("timeout", 30)
-    body = _build_body(query, opts, d, bool(opts.get("image")))
-    if method == "apikey":
-        headers = {
-            "Authorization": f"Bearer {key1}",
-            "Content-Type": "application/json",
-        }
-        return _do_request(APIKEY_URL, headers, json.dumps(body, ensure_ascii=False), timeout)
-    return sign_and_send_aksk("POST", {}, body, key1, key2, "WebSearch", timeout)
-
-
 # --- 结果转换 -----------------------------------------------------------------
 
 
@@ -385,61 +347,75 @@ def _to_metadata(payload: dict, results: list[SearchResult]) -> dict:
     return metadata
 
 
-# --- 对外接口 -----------------------------------------------------------------
-
-
-def _search(cfg: dict, query: str, opts: dict) -> SearchResponse:
-    """执行 doubao 搜索（image=True 走图片搜索，否则网页搜索）。"""
-    query = (query or "").strip()
-    # full 只影响展示（formatter 截断），不映射到 API body —— 与原 CLI 一致
-    payload = _request(cfg, query, opts)
-
-    results = _to_results(payload, bool(opts.get("image")))
-    if not results:
-        raise NoResultsError("未找到结果")
-    return SearchResponse(
-        query=query, results=results, answer=None, metadata=_to_metadata(payload, results),
-    )
+# --- Provider 实现 ------------------------------------------------------------
 
 
 @register
 class DoubaoProvider(Provider):
-    """doubao 搜索后端（实现见上 *_search/_has_credentials/_test_credentials）。"""
+    """doubao 搜索后端（API Key Bearer 或火山引擎 AK/SK 签名）。"""
 
     name = "doubao"
-    categories = frozenset({"search.web", "search.image"})
+    categories = frozenset({"web", "image"})
     # 配置键（自动生成 config show/set 的键、默认值、secret 脱敏、提示）
     config = {
-        "api_key": {"secret": True, "hint": "豆包 WebSearch API Key（Bearer）"},
-        "ak": {"secret": True, "hint": "火山引擎 AccessKey"},
-        "sk": {"secret": True, "hint": "火山引擎 SecretKey"},
-        "auth": {"hint": "鉴权方式：apikey / aksk（留空自动检测）"},
-        "count_web": {"default": 20, "hint": "网页结果数（1-50）"},
-        "count_image": {"default": 5, "hint": "图片结果数（1-5）"},
-        "need_url": {"default": False, "hint": "只返回带落地链接的结果（true/false）"},
-        "need_content": {"default": False, "hint": "只返回带正文的结果（true/false）"},
-        "content_formats": {"hint": "正文格式：text / markdown"},
-        "time_range": {"hint": "时间范围：OneDay/OneWeek/OneMonth/OneYear 或 YYYY-MM-DD..YYYY-MM-DD"},
-        "industry": {"hint": "行业搜索：finance / game / gov"},
+        "api_key": {"secret": True, "hint": "Doubao WebSearch API key (Bearer)"},
+        "ak": {"secret": True, "hint": "Volcengine AccessKey"},
+        "sk": {"secret": True, "hint": "Volcengine SecretKey"},
+        "auth": {"hint": "auth method: apikey / aksk (leave empty to auto-detect)"},
+        "count_web": {"default": 20, "hint": "web result count (1-50)"},
+        "count_image": {"default": 5, "hint": "image result count (1-5)"},
+        "need_url": {"default": False, "hint": "only return results with landing URLs (true/false)"},
+        "need_content": {"default": False, "hint": "only return results with full content (true/false)"},
+        "content_formats": {"hint": "content format: text / markdown"},
+        "time_range": {"hint": "time range: OneDay/OneWeek/OneMonth/OneYear or YYYY-MM-DD..YYYY-MM-DD"},
+        "industry": {"hint": "industry search: finance / game / gov"},
     }
-    priority = {"search.web": 10, "search.image": 10}  # 默认链排序（小在前）
+    priority = {"web": 10, "image": 10}  # 默认链排序（小在前）
     auth_required = True  # 必须有 apikey 或 AK/SK 才能用（链跳过未配的）
-    # 图片搜索由 search image 子命令路由（api 注入 image=True），参数面只留图片专属
+    # 图片搜索由 search --image 路由（category="image" 显式传入），参数面只留图片专属
     params = {
-        "search.image": {
-            "width_min": ParamSpec(type=int, help="最小宽度"),
-            "width_max": ParamSpec(type=int, help="最大宽度"),
-            "height_min": ParamSpec(type=int, help="最小高度"),
-            "height_max": ParamSpec(type=int, help="最大高度"),
-            "shapes": ParamSpec(choices=("横长方形", "竖长方形", "方形"), help="图片形状"),
+        "image": {
+            "width_min": ParamSpec(type=int, help="minimum width"),
+            "width_max": ParamSpec(type=int, help="maximum width"),
+            "height_min": ParamSpec(type=int, help="minimum height"),
+            "height_max": ParamSpec(type=int, help="maximum height"),
+            "shapes": ParamSpec(choices=("横长方形", "竖长方形", "方形"), help="image shape"),
         },
     }
 
-    def has_credentials(self, cfg: dict) -> bool:
-        return _has_credentials(cfg)
+    def has_credentials(self) -> bool:
+        """doubao 段有 api_key（Bearer）或有 ak+sk（签名）即 True。"""
+        d = self.cfg
+        return bool(d.get("api_key")) or (bool(d.get("ak")) and bool(d.get("sk")))
 
-    def test_credentials(self, cfg: dict) -> str:
-        return _test_credentials(cfg)
+    def test_credentials(self) -> str:
+        """发一个最小搜索请求验证凭证，成功返回状态描述（如 "OK (0.4s)"）。"""
+        t0 = time.monotonic()
+        self._request("ping", {"count": 1}, image=False, timeout=15)
+        elapsed = time.monotonic() - t0
+        return f"OK ({elapsed:.1f}s)"
 
-    def search(self, cfg: dict, query: str, opts: dict) -> SearchResponse:
-        return _search(cfg, query, opts)
+    def search(self, category: str, query: str, opts: dict) -> SearchResponse:
+        """执行 doubao 搜索（category="image" 走图片搜索，否则网页搜索）。"""
+        query = (query or "").strip()
+        image = category == "image"
+        # full 只影响展示（formatter 截断），不映射到 API body —— 与原 CLI 一致
+        payload = self._request(query, opts, image, timeout=self.timeout())
+
+        results = _to_results(payload, image)
+        if not results:
+            raise NoResultsError("no results found")
+        return SearchResponse(
+            query=query, results=results, answer=None,
+            metadata=_to_metadata(payload, results),
+        )
+
+    def _request(self, query: str, opts: dict, image: bool, timeout: float) -> dict:
+        """凭据解析 + body 构造 + 发送请求（apikey 或 aksk），返回原始 payload。"""
+        d = self.cfg
+        method, key1, key2 = _resolve_creds(d)
+        body = _build_body(query, opts, d, image)
+        if method == "apikey":
+            headers = {"Authorization": f"Bearer {key1}"}
+            return _do_request(APIKEY_URL, headers, body, timeout)
+        return sign_and_send_aksk("POST", {}, body, key1, key2, "WebSearch", timeout)

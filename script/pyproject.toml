@@ -1,8 +1,8 @@
 [project]
-name = "ezwork-tool"
-version = "0.3.0"
-description = "Unified CLI: search (web/image/paper/data) + convert (URL/file to Markdown) + config. One tool, one skill."
-readme = {text = "ezwork-tool: unified search / convert / config CLI (see repo root README.md)", content-type = "text/plain"}
+name = "eztool"
+version = "0.4.0"
+description = "Unified CLI: search (web/image/data) + fetch (URL to Markdown) + convert (file to Markdown) + config. One tool, one skill."
+readme = {text = "eztool: unified search / fetch / convert / config CLI (see repo root README.md)", content-type = "text/plain"}
 requires-python = ">=3.10"
 dependencies = []
 
@@ -13,11 +13,18 @@ dependencies = []
 local = ["firecrawl-anydoc>=0.1.3"]
 
 [project.scripts]
-eztool = "ezwork_tool.cli:main"
+eztool = "eztool.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ezwork_tool"]
+packages = ["src/eztool"]

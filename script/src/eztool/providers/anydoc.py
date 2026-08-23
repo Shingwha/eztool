@@ -1,6 +1,6 @@
 """anydoc provider — 本地文档 → Markdown（Firecrawl anydoc，Rust 核心）。
 
-定位：convert.file 回退链最前。本地毫秒级出 Markdown（免费、无网络、无凭证）；
+定位：file 链最前。本地毫秒级出 Markdown（免费、无网络、无凭证）；
 不合适时快速失败，链自动降级到云端（markdown_new → mineru）。
 
 能力分层（按扩展名路由）：
@@ -47,9 +47,6 @@ SUPPORTED_EXTENSIONS = (
     ENGINE_EXTENSIONS | TEXT_EXTENSIONS | CODE_EXTENSIONS | HTML_EXTENSIONS
 )
 
-# 纯文本/结构化/HTML 不需要 anydoc 库（标准库直读）；引擎格式才需要
-_NEEDS_LIBRARY = ENGINE_EXTENSIONS
-
 
 def _load_library():
     """惰性导入 anydoc；未安装抛可跳过的错误（链继续）。"""
@@ -58,8 +55,8 @@ def _load_library():
         return anydoc
     except ImportError:
         raise ServiceError(
-            "firecrawl-anydoc 未安装（Windows/macOS/Linux: pip install "
-            "firecrawl-anydoc，或 eztool 安装时带 [local] extra）",
+            "firecrawl-anydoc is not installed (Windows/macOS/Linux: pip install "
+            "firecrawl-anydoc, or install eztool with the [local] extra)",
             CATEGORY_INVALID,
         ) from None
 
@@ -315,14 +312,14 @@ class AnydocProvider(Provider):
     """本地文档解析：anydoc 引擎（14 格式）+ 纯文本/结构化/HTML 直读。"""
 
     name = "anydoc"
-    categories = frozenset({"convert.file"})
+    categories = frozenset({"file"})
     # 本地库无需凭证
     config = {
-        "timeout": {"default": 60, "hint": "anydoc 本地解析超时秒数"},
+        "timeout": {"default": 60, "hint": "anydoc local parsing timeout in seconds"},
     }
-    priority = {"convert.file": 10}
+    priority = {"file": 10}
 
-    def has_credentials(self, cfg: dict) -> bool:
+    def has_credentials(self) -> bool:
         """本地库没有凭证概念：已安装即视为可用（纯文本类不需要库）。"""
         try:
             _load_library()
@@ -330,9 +327,9 @@ class AnydocProvider(Provider):
         except ServiceError:
             return False
 
-    def test_credentials(self, cfg: dict) -> str:
+    def test_credentials(self) -> str:
         _load_library()  # 未安装抛可跳过的错误
-        return "本地库已安装（无需凭证）"
+        return "local library installed (no credentials needed)"
 
     def convert_file(self, path: str, timeout: int = 60) -> FetchResult:
         """本地文档 → Markdown；不合适/失败时抛错交给回退链。"""
@@ -340,11 +337,12 @@ class AnydocProvider(Provider):
         ext = os.path.splitext(path)[1].lower()
         if ext not in SUPPORTED_EXTENSIONS:
             raise ServiceError(
-                f"anydoc 不支持 {ext or '无扩展名'}，交给链中其它 provider",
+                f"anydoc does not support {ext or 'no extension'}; "
+                "leaving it to the rest of the chain",
                 CATEGORY_INVALID,
             )
         if not os.path.isfile(path):
-            raise ServiceError(f"文件不存在: {path}", CATEGORY_INVALID)
+            raise ServiceError(f"file not found: {path}", CATEGORY_INVALID)
 
         # 纯文本 / 结构化 / HTML：标准库直读，无需 anydoc 库
         if ext in TEXT_EXTENSIONS:
@@ -359,18 +357,19 @@ class AnydocProvider(Provider):
                 content = lib.to_markdown(path)
             except OSError as e:
                 raise ServiceError(
-                    f"文件读取失败: {e}", CATEGORY_INVALID,
+                    f"failed to read file: {e}", CATEGORY_INVALID,
                 ) from e
             except Exception as e:  # ConvertError（扫描版 PDF / 加密 / 损坏）等
                 raise ServiceError(
-                    f"anydoc 解析失败: {type(e).__name__}: {e}",
+                    f"anydoc failed to parse: {type(e).__name__}: {e}",
                     CATEGORY_EMPTY,  # retriable → 链继续走云端（MinerU 有 OCR）
                 ) from e
 
         content = (content or "").strip()
         if not content:
             raise ServiceError(
-                "文档未提取出文本，降级云端", CATEGORY_EMPTY,
+                "no text extracted from the document; falling back to the cloud",
+                CATEGORY_EMPTY,
             )
         return FetchResult(
             provider=self.name,

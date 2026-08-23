@@ -1,11 +1,16 @@
-"""eztool 统一配置：~/.config/ezwork-tool/config.json。
+"""eztool 统一配置：~/.config/eztool/config.json。
 
-结构：``providers.<name>`` 段（各服务商凭证/超时，键由 provider 的 ``config``
-声明自动生成）+ ``search.<类别>`` / ``convert.<类别>`` 段（类别回退链与缺省
-超时，链默认值由 provider 的 ``priority`` 自动派生）。
+三段式结构：
+
+- ``settings.*``：全局设置（目前只有 ``timeout`` 默认超时，预留扩展）。
+- ``chains.<类别>``：五条回退链（web/image/data/page/file），默认值由
+  provider 的 ``priority`` 声明自动派生。
+- ``providers.<name>.*``：各服务商凭证/私有配置，键由 provider 的
+  ``config`` 声明自动生成。
 
 本模块只剩通用读写工具——DEFAULTS / SECRET_KEYS / KEY_HINTS 全部由
-``provider.provider_config_map()`` 生成，新增 provider/配置键无需改这里。
+``provider.provider_config_map()`` + ``default_chain()`` 生成，新增
+provider/配置键无需改这里。
 """
 
 from __future__ import annotations
@@ -20,28 +25,23 @@ from . import providers as _providers  # noqa: F401  (side-effect: 先注册再�
 
 CONFIG_DIR_ENV = "EZTOOL_CONFIG_DIR"
 
-# 类别段结构（链默认值运行时从 provider.priority 派生）
-_CATEGORY_SECTIONS = {
-    "search": {"web", "image", "data"},
-    "convert": {"page", "file"},
-}
+ALL_CATEGORIES = prov.SEARCH_CATEGORIES + prov.CONVERT_CATEGORIES
 
 
 def _build_defaults() -> dict[str, Any]:
-    """默认配置：providers 段来自元数据；类别段链默认值自动派生。"""
-    defaults: dict[str, Any] = {"providers": {}, "search": {}, "convert": {}}
+    """默认配置：settings + chains（自动派生）+ providers（元数据生成）。"""
+    defaults: dict[str, Any] = {
+        "settings": {"timeout": 30},
+        "chains": {},
+        "providers": {},
+    }
+    for cat in ALL_CATEGORIES:
+        defaults["chains"][cat] = prov.default_chain(cat)  # 出厂默认 = 自动派生；可显式覆盖
     for name, keys in prov.provider_config_map().items():
         sec = {"timeout": 30}
         for key, meta in keys.items():
             sec[key] = meta["default"]
         defaults["providers"][name] = sec
-    for domain, ops in _CATEGORY_SECTIONS.items():
-        for op in ops:
-            cat = f"{domain}.{op}"
-            defaults[domain][op] = {
-                "providers": prov.default_chain(cat),  # 出厂默认 = 自动派生；可显式覆盖
-                "timeout": 30,
-            }
     return defaults
 
 
@@ -61,19 +61,14 @@ SECRET_KEYS = _build_secret_keys()
 
 
 def _build_key_hints() -> dict[str, str]:
-    hints: dict[str, str] = {}
+    hints: dict[str, str] = {"settings.timeout": "global default timeout in seconds"}
+    for cat in ALL_CATEGORIES:
+        chain = ", ".join(prov.default_chain(cat)) or "(empty — no provider declares priority)"
+        hints[f"chains.{cat}"] = f"{cat} fallback chain, comma-separated (default: {chain})"
     for name, kmap in prov.provider_config_map().items():
         for key, meta in kmap.items():
             if meta["hint"]:
                 hints[f"providers.{name}.{key}"] = meta["hint"]
-    for domain, ops in _CATEGORY_SECTIONS.items():
-        for op in ops:
-            cat = f"{domain}.{op}"
-            chain = ", ".join(prov.default_chain(cat)) or "(空——无 provider 声明 priority)"
-            hints[f"{domain}.{op}.providers"] = (
-                f"{domain}.{op} 回退链，逗号分隔（默认: {chain}）"
-            )
-            hints[f"{domain}.{op}.timeout"] = f"{domain}.{op} 默认超时秒数"
     return hints
 
 
@@ -82,7 +77,7 @@ KEY_HINTS = _build_key_hints()
 
 def config_dir() -> str:
     return os.environ.get(CONFIG_DIR_ENV) or os.path.join(
-        os.path.expanduser("~"), ".config", "ezwork-tool")
+        os.path.expanduser("~"), ".config", "eztool")
 
 
 def config_path() -> str:
@@ -140,8 +135,8 @@ def set_key(cfg: dict, path: str, value: Any) -> None:
 
 
 def parse_value(path: str, raw: str) -> Any:
-    """把命令行字符串转成目标类型（bool/int/list/str）。"""
-    if path.endswith(".providers"):
+    """把命令行字符串转成目标类型（chains.* → list；bool/int/str 自动识别）。"""
+    if path.startswith("chains."):
         return [p.strip() for p in raw.split(",") if p.strip()]
     low = raw.strip().lower()
     if low in ("true", "false"):

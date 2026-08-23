@@ -3,8 +3,7 @@
 Firecrawl is a dedicated scraping service: browser rendering, smart
 caching, boilerplate removal, clean markdown out of the box. **No API
 key required** — keyless access works with per-IP rate limits. Set
-``FIRECRAWL_API_KEY`` (env) or ``api_key`` in the ``[firecrawl]`` config
-section for higher limits.
+``providers.firecrawl.api_key`` in the config for higher limits.
 
 No content limits are imposed — neither client-side truncation nor a
 server-side ``maxContentLength`` (the v2 API has no such parameter), so
@@ -14,10 +13,8 @@ from __future__ import annotations
 
 import json
 
-from ..provider import Provider
+from ..provider import Provider, post_json, register
 from ..util import CATEGORY_HTTP, ServiceError
-from ..util import http_post
-from ..provider import register
 
 API_URL = "https://api.firecrawl.dev/v2/scrape"
 
@@ -25,31 +22,29 @@ API_URL = "https://api.firecrawl.dev/v2/scrape"
 @register
 class FirecrawlProvider(Provider):
     name = "firecrawl"
-    categories = frozenset({"convert.page"})
+    categories = frozenset({"page"})
     # keyless 可用（per-IP 限流）；配了 key 提额度
     config = {
-        "api_key": {"secret": True, "hint": "Firecrawl API Key（可选，keyless 限流可用）"},
-        "timeout": {"default": 60, "hint": "firecrawl 超时秒数"},
+        "api_key": {"secret": True, "hint": "Firecrawl API key (optional; keyless access is rate-limited)"},
+        "timeout": {"default": 60, "hint": "firecrawl timeout in seconds"},
     }
-    priority = {"convert.page": 50}
+    priority = {"page": 50}
 
     def build_headers(self) -> dict:
-        headers = {"Content-Type": "application/json"}
+        headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
     def _request(self, target: str, timeout: int):
-        payload = json.dumps(
-            {
-                "url": target,
-                "formats": ["markdown"],
-                "onlyMainContent": True,
-                "timeout": max(1000, min(int(timeout) * 1000, 300000)),
-            }
-        ).encode("utf-8")
+        payload = {
+            "url": target,
+            "formats": ["markdown"],
+            "onlyMainContent": True,
+            "timeout": max(1000, min(int(timeout) * 1000, 300000)),
+        }
         # map_http_error 会尽力带上 API 自己的错误消息（如 402 Payment required / 429 rate limit）
-        return http_post(API_URL, self.build_headers(), payload, timeout)
+        return post_json(API_URL, self.build_headers(), payload, timeout)
 
     def parse_body(self, status: int, headers, body: bytes) -> str:
         try:

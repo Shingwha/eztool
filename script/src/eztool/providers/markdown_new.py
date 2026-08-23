@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.request
 
 from ..provider import FetchResult, Provider
@@ -44,13 +45,13 @@ _INVALID_CODES = {"UNSUPPORTED_FORMAT", "FILE_TOO_LARGE", "INVALID_FILE"}
 @register
 class MarkdownNewProvider(Provider):
     name = "markdown_new"
-    categories = frozenset({"convert.page", "convert.file"})
+    categories = frozenset({"page", "file"})
     base_url = "https://markdown.new/"
     # 免费无 key
     config = {
-        "timeout": {"default": 30, "hint": "markdown.new 超时秒数"},
+        "timeout": {"default": 30, "hint": "markdown.new timeout in seconds"},
     }
-    priority = {"convert.page": 10, "convert.file": 20}
+    priority = {"page": 10, "file": 20}
 
     # Note: markdown.new treats the whole request path+query as the target
     # URL, so we cannot append ?method= without corrupting URLs that carry
