@@ -99,3 +99,25 @@ def format_sources(sources: list[tuple[str, str]]) -> str:
     for name, desc in sources:
         lines.append(f"- `{name}` — {desc}")
     return "\n".join(lines)
+
+
+def format_summary(answer: str, citations: list, query: str | None = None) -> str:
+    """--summarize 输出：AI 答案 + 确定性引用表（替代原始结果列表）。
+
+    引用表的链接/provider 标注来自程序编号（summarize.Citation），不是 LLM
+    输出——LLM 只在答案里写 [n]。
+    """
+    lines: list[str] = []
+    if query:
+        lines += [f"## Summary: {query}", ""]
+    lines += ["### Answer", "", answer.strip(), ""]
+    if citations:
+        lines += ["### Sources", ""]
+        for c in citations:
+            title = c.title or c.url or f"(source {c.index})"
+            line = f"[{c.index}] [{title}]({c.url})" if c.url else f"[{c.index}] {title}"
+            if c.provider:
+                line += f" **[{c.provider}]**"
+            lines.append(line)
+        lines.append("")
+    return "\n".join(lines)

@@ -15,8 +15,10 @@ eztool search "Rust async 2026"           # web search (doubao→anysearch→dee
 eztool search "cats" --image --width-min 800   # image search (direct links + size/shape metadata)
 eztool search "AAPL" --source finance.quote --params '{"type":"quote"}'  # data source (anysearch, 40 tags)
 eztool search "LLM agents" --all          # whole default chain in parallel + merge/dedup
+eztool search "LLM agents" --all --summarize   # + AI synthesis with citations (needs summarize.* config)
 eztool sources                            # data source tag catalog
 eztool fetch https://example.com/article  # URL → Markdown (markdown_new→jina_reader→anysearch→tavily→firecrawl→keen)
+eztool fetch https://a/ https://b/ --summarize --query "pricing"  # multi-URL fetch + AI synthesis
 eztool convert report.pdf --out report.md # local file → Markdown (anydoc→markdown_new→mineru)
 eztool config test                        # verify credentials
 ```
@@ -55,14 +57,15 @@ and troubleshooting: [`references/guide.md`](references/guide.md).
 
 Architecture: `util` (errors/HTTP/quality gate) → `provider` (base class +
 registry) → `providers/` (implementations) → `api` (routing + chains) →
-`format` → `cli`.
+`summarize` (LLM synthesis) → `format` → `cli`.
 
 ```
 script/src/eztool/
 ├── util.py       # exception taxonomy + HTTP helpers + content quality gate
 ├── provider.py   # Provider base class + metadata declarations + registry (SERVICES)
 ├── providers/    # 12 provider implementations; __init__.py is the only registration point
-├── api.py        # category routing + chain/parallel execution + quality gate
+├── api.py        # category routing + chain/parallel execution + quality gate + summarize hooks
+├── summarize.py  # --summarize: summarizer registry + OpenAI-compatible backend + prompt/citations
 ├── format.py     # output formatting (Markdown)
 ├── config.py     # config I/O; DEFAULTS/SECRET_KEYS/KEY_HINTS generated from metadata
 └── cli.py        # argparse command surface + dispatch
@@ -78,7 +81,7 @@ only the provider file.
 ```bash
 cd script
 uv run python -m eztool.cli --help   # run without installing
-uv run --group dev pytest -q         # tests (121 cases, fully mocked, zero network)
+uv run --group dev pytest -q         # tests (144 cases, fully mocked, zero network)
 uv tool install ".[local]" --force --reinstall   # reinstall after changes
 ```
 

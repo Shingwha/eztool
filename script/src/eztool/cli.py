@@ -5,9 +5,12 @@
 - ``eztool search "<q>"``：通用搜索；``--image`` 图片搜索；``--source <tag>``
   专业数据源（配合 ``--params`` 传标签额外参数）；``--all`` 默认链全员并行。
 - ``eztool sources``：数据源标签清单（注册表聚合）。
-- ``eztool fetch <url>``：URL → Markdown；``eztool convert <file>``：本地文件 → Markdown。
+- ``eztool fetch <url>...``：URL → Markdown（多 URL 并行）；``eztool convert <file>``：本地文件 → Markdown。
 - ``--use a,b``：search = 并行合并；fetch/convert = 顺序覆盖链；1 个 = 单跑。
   缺省走 ``chains.*`` 配置回退链。
+- ``--summarize``：search/fetch/convert 通用——内容再过一道 OpenAI 兼容
+  LLM（``summarize.*`` 配置）做提炼，输出 AI 答案 + 确定性引用表；
+  fetch/convert 可加 ``--query`` 指定关注点。
 """
 
 from __future__ import annotations
@@ -27,8 +30,9 @@ from .format import (
     format_image,
     format_search,
     format_sources,
+    format_summary,
 )
-from .util import EztoolError, UsageError
+from .util import EztoolError, ServiceError, UsageError
 
 _SEARCH_FORMATTERS = {
     "web": format_search,
@@ -89,6 +93,9 @@ def build_parser() -> argparse.ArgumentParser:
     breadth.add_argument("--use", metavar="A,B",
                          help="pick providers: one = run it alone; multiple = parallel merge; "
                               "omit to use the configured chains fallback")
+    sp.add_argument("--summarize", action="store_true",
+                    help="AI-synthesize the results into an answer with citations "
+                         "(requires summarize.* config; replaces the raw result list)")
     sp.add_argument("--count", type=int, default=None,
                     help="results per provider (overrides each provider's default)")
     sp.add_argument("--timeout", type=int, default=None,
@@ -109,10 +116,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("sources", help="list all data source tags (use with search --source)"
                    ).set_defaults(func=cmd_sources)
 
-    # ── fetch：URL → Markdown ──
-    fp = sub.add_parser("fetch", help="fetch a URL as Markdown (online chain)")
-    fp.add_argument("target", nargs="?", help="http(s):// URL")
+    # ── fetch：URL → Markdown（支持多 URL，并行抓取）──
+    fp = sub.add_parser("fetch", help="fetch URL(s) as Markdown (online chain; "
+                                      "multiple URLs fetched in parallel)")
+    fp.add_argument("target", nargs="+", help="http(s):// URL(s)")
     fp.add_argument("--out", metavar="PATH", help="write to this file instead of stdout")
+    fp.add_argument("--summarize", action="store_true",
+                    help="AI-synthesize the fetched content into an answer with "
+                         "citations (requires summarize.* config)")
+    fp.add_argument("--query", metavar="FOCUS",
+                    help="with --summarize: the question/focus for the synthesis "
+                         "(strongly recommended — beats the generic summary)")
     _add_use_timeout(fp, convert_mode=True)
     fp.add_argument("--list-providers", action="store_true",
                     help="list providers available for the online fetch chain and "
@@ -123,6 +137,12 @@ def build_parser() -> argparse.ArgumentParser:
     vp = sub.add_parser("convert", help="convert a local file to Markdown (local parsing chain)")
     vp.add_argument("target", nargs="?", help="local file path")
     vp.add_argument("--out", metavar="PATH", help="write to this file instead of stdout")
+    vp.add_argument("--summarize", action="store_true",
+                    help="AI-synthesize the converted content into an answer with "
+                         "citations (requires summarize.* config)")
+    vp.add_argument("--query", metavar="FOCUS",
+                    help="with --summarize: the question/focus for the synthesis "
+                         "(strongly recommended — beats the generic summary)")
     _add_use_timeout(vp, convert_mode=True)
     vp.add_argument("--list-providers", action="store_true",
                     help="list providers available for the local parsing chain and "
@@ -172,9 +192,15 @@ def cmd_search(args: argparse.Namespace) -> None:
     if not args.query:
         raise UsageError("missing search query (or use --list-providers to see "
                          "available providers)")
+    if args.summarize and category == "image":
+        raise UsageError("--summarize does not apply to image search "
+                         "(results have no text content)")
     cfg = cfgmod.load_config()
+    if args.summarize:
+        api.check_summarize(cfg)  # 缺配置 fail-fast（exit 2），不浪费搜索
     opts: dict = {"use": args.use, "all": args.all,
-                  "count": args.count, "timeout": args.timeout}
+                  "count": args.count, "timeout": args.timeout,
+                  "summarize": args.summarize}
     if args.source:
         opts["source"] = args.source
     if args.params:
@@ -185,7 +211,10 @@ def cmd_search(args: argparse.Namespace) -> None:
             opts[pname] = v
     opts = {k: v for k, v in opts.items() if v is not None}
     resp = api.search(cfg, category, args.query, opts)
-    print(_SEARCH_FORMATTERS[category](resp))
+    if args.summarize and resp.answer:
+        print(format_summary(resp.answer, resp.citations or [], resp.query))
+    else:  # 未要求总结，或总结失败降级（stderr 已有 [summarize] failed 日志）
+        print(_SEARCH_FORMATTERS[category](resp))
 
 
 def cmd_sources(args: argparse.Namespace) -> None:
@@ -215,28 +244,66 @@ def _print_category_providers(category: str) -> None:
 # ── fetch / convert ───────────────────────────────────────────────────────────
 
 
-def _emit_result(result, out: str | None) -> None:
+def _emit_content(content: str, out: str | None) -> None:
     if out:
         with open(out, "w", encoding="utf-8") as f:
-            f.write(result.content)
-        print(f"wrote {out} ({len(result.content)} chars)")
+            f.write(content)
+        print(f"wrote {out} ({len(content)} chars)")
     else:
-        print(result.content)
+        print(content)
+
+
+def _concat_pages(results) -> str:
+    """多 URL 原始输出：单篇直接给正文；多篇用注释分隔符标注来源。"""
+    if len(results) == 1:
+        return results[0].content
+    return "\n\n---\n\n".join(
+        f"<!-- eztool: {r.url} [{r.provider}] -->\n\n{r.content}" for r in results
+    )
+
+
+def _pages_request(args, fallback: str) -> str:
+    """fetch/convert --summarize 的 request：--query 优先，否则通用摘要。"""
+    return args.query or fallback
+
+
+def _emit_pages(args, cfg, results) -> None:
+    """fetch/convert 输出收口：--summarize → AI 答案+引用（失败降级原文）。"""
+    if not args.summarize:
+        _emit_content(_concat_pages(results), args.out)
+        return
+    n = len(results)
+    fallback = (f"Summarize the key points of this content."
+                if n == 1 else
+                f"Synthesize the key points across these {n} sources, noting "
+                f"agreements and differences.")
+    try:
+        summary = api.summarize_pages(cfg, _pages_request(args, fallback), results)
+    except ServiceError as e:  # LLM 失败降级：warning + 原始内容（exit 0）
+        print(f"warning: summarize failed ({e.message}); returning raw content",
+              file=sys.stderr)
+        _emit_content(_concat_pages(results), args.out)
+        return
+    _emit_content(format_summary(summary.answer, summary.citations), args.out)
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
     if args.list_providers:
         _print_category_providers("page")
         return
-    if not args.target:
-        raise UsageError("missing URL argument (or use --list-providers)")
-    if urlparse(args.target).scheme not in ("http", "https"):
-        raise UsageError(f"fetch only accepts http(s):// URLs; use eztool convert "
-                         f"for local files: {args.target}")
+    for url in args.target:
+        if urlparse(url).scheme not in ("http", "https"):
+            raise UsageError(f"fetch only accepts http(s):// URLs; use eztool convert "
+                             f"for local files: {url}")
     cfg = cfgmod.load_config()
-    result = api.fetch(cfg, args.target,
-                       {"use": args.use, "timeout": args.timeout})
-    _emit_result(result, args.out)
+    if args.summarize:
+        api.check_summarize(cfg)  # 缺配置 fail-fast（exit 2），不浪费抓取
+    results, errors = api.fetch_many(
+        cfg, args.target, {"use": args.use, "timeout": args.timeout}
+    )
+    for url, e in errors:
+        print(f"warning: {url} failed: {e}", file=sys.stderr)
+    _emit_pages(args, cfg, results)
 
 
 def cmd_convert(args: argparse.Namespace) -> None:
@@ -249,9 +316,11 @@ def cmd_convert(args: argparse.Namespace) -> None:
         raise UsageError(f"convert only accepts local files; use eztool fetch "
                          f"for URLs: {args.target}")
     cfg = cfgmod.load_config()
+    if args.summarize:
+        api.check_summarize(cfg)  # 缺配置 fail-fast（exit 2），不浪费解析
     result = api.convert(cfg, args.target,
                          {"use": args.use, "timeout": args.timeout})
-    _emit_result(result, args.out)
+    _emit_pages(args, cfg, [result])
 
 
 # ── config ────────────────────────────────────────────────────────────────────

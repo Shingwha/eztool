@@ -1,14 +1,16 @@
 """eztool 统一配置：~/.config/eztool/config.json。
 
-三段式结构：
+四段式结构：
 
 - ``settings.*``：全局设置（目前只有 ``timeout`` 默认超时，预留扩展）。
 - ``chains.<类别>``：五条回退链（web/image/data/page/file），默认值由
   provider 的 ``priority`` 声明自动派生。
 - ``providers.<name>.*``：各服务商凭证/私有配置，键由 provider 的
   ``config`` 声明自动生成。
+- ``summarize.*``：--summarize 的 LLM 端点（OpenAI 兼容），显式声明
+  （非 provider，不走元数据生成）。
 
-本模块只剩通用读写工具——DEFAULTS / SECRET_KEYS / KEY_HINTS 全部由
+providers 段的 DEFAULTS / SECRET_KEYS / KEY_HINTS 全部由
 ``provider.provider_config_map()`` + ``default_chain()`` 生成，新增
 provider/配置键无需改这里。
 """
@@ -42,6 +44,13 @@ def _build_defaults() -> dict[str, Any]:
         for key, meta in keys.items():
             sec[key] = meta["default"]
         defaults["providers"][name] = sec
+    defaults["summarize"] = {
+        "backend": "openai",       # 注册表选择器（拓展口）
+        "base_url": None,          # 必需：OpenAI 兼容端点（如 https://api.deepseek.com）
+        "api_key": None,           # 必需（secret）
+        "model": None,             # 必需（如 deepseek-v4-flash）
+        "timeout": 120,
+    }
     return defaults
 
 
@@ -49,7 +58,7 @@ DEFAULTS = _build_defaults()
 
 
 def _build_secret_keys() -> frozenset:
-    keys: set[str] = set()
+    keys: set[str] = {"summarize.api_key"}
     for name, kmap in prov.provider_config_map().items():
         for key, meta in kmap.items():
             if meta["secret"]:
@@ -62,6 +71,9 @@ SECRET_KEYS = _build_secret_keys()
 
 def _build_key_hints() -> dict[str, str]:
     hints: dict[str, str] = {"settings.timeout": "global default timeout in seconds"}
+    hints["summarize.base_url"] = "OpenAI-compatible endpoint for --summarize (e.g. https://api.deepseek.com)"
+    hints["summarize.api_key"] = "API key for the summarize endpoint"
+    hints["summarize.model"] = "model name for --summarize (e.g. deepseek-v4-flash)"
     for cat in ALL_CATEGORIES:
         chain = ", ".join(prov.default_chain(cat)) or "(empty — no provider declares priority)"
         hints[f"chains.{cat}"] = f"{cat} fallback chain, comma-separated (default: {chain})"

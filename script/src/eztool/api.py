@@ -10,7 +10,12 @@
   （同一内容不重复打 API）。显式点名的 auth_required provider 未配凭证
   直接报错，不静默跳过。
 
-内容质量门（拦截页/可疑内容）统一收口在 ``_convert_chain``。
+内容质量门（拦截页/可疑内容）统一收口在 ``_convert_chain`。
+
+``--summarize``（search/fetch/convert 通用）：内容拿到后再过一道
+``summarize`` 模块做 AI 提炼——search 回填 ``resp.answer`` + ``citations``
+（引用表程序生成），pages 由 ``summarize_pages`` 返回 Summary；LLM 失败
+降级为原始结果（warning），未配 ``summarize.*`` 则用法错误（exit 2）。
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config as cfgmod
 from . import provider as prov
+from . import summarize as smm
 from .provider import FetchResult, ProviderOpts, SearchResponse, SearchResult
 from .util import (
     CATEGORY_ALL_FAILED,
@@ -32,7 +38,8 @@ from .util import (
 )
 from . import providers as _providers  # noqa: F401  (side-effect: 注册)
 
-__all__ = ["search", "fetch", "convert", "list_category_providers", "list_sources"]
+__all__ = ["search", "fetch", "fetch_many", "convert", "summarize_pages",
+           "check_summarize", "list_category_providers", "list_sources"]
 
 
 # ── 配置 → ProviderOpts ──────────────────────────────────────────────────────
@@ -135,6 +142,7 @@ def search(
     popts = _provider_opts(cfg, opts.pop("timeout", None))
     use = _parse_use(opts.pop("use", None))
     run_all = bool(opts.pop("all", False))
+    want_summary = bool(opts.pop("summarize", False))
 
     if use:  # 显式并行/单跑（不跳过凭证检查，点名了没配就报错）
         _check_provider_names(use)
@@ -148,7 +156,36 @@ def search(
             resp = _search_chain(cfg, category, query, opts, names, popts)
     if resp.metadata is None:
         resp.metadata = {}
+    if want_summary:
+        _apply_search_summary(cfg, query, resp)
     return resp
+
+
+def _apply_search_summary(cfg: dict, query: str, resp: SearchResponse) -> None:
+    """--summarize：结果喂 LLM 提炼，回填 answer + 确定性引用表。
+
+    LLM 失败降级为原始结果（metadata.summary_error 记录原因）；未配
+    summarize.* 抛 UsageError（exit 2，config 前置校验一般已拦住）。
+    """
+    backend = str((resp.metadata or {}).get("backend") or "")
+    items = [
+        smm.SourceItem(
+            title=r.title, url=r.url,
+            text=r.content or r.snippet or "",
+            provider=r.source or backend,
+        )
+        for r in resp.results
+    ]
+    t0 = _now()
+    try:
+        summary = smm.summarize(cfg, query, items)
+    except ServiceError as e:
+        resp.metadata["summary_error"] = str(e)
+        _log(f"[summarize] failed: {e} -> returning raw results")
+        return
+    resp.answer = summary.answer
+    resp.citations = summary.citations
+    _log(f"[summarize] OK ({_elapsed(t0)}s, {len(summary.citations)} sources)")
 
 
 def _search_chain(cfg, category, query, opts, names, popts) -> SearchResponse:
@@ -226,6 +263,46 @@ def fetch(cfg: dict, url: str, opts: dict | None = None) -> FetchResult:
                     lambda svc: svc.fetch(url, timeout=svc.timeout()))
 
 
+def fetch_many(
+    cfg: dict, urls: list[str], opts: dict | None = None
+) -> tuple[list[FetchResult], list[tuple[str, ServiceError]]]:
+    """多 URL 抓取：URL 间并行，每个 URL 独立走 page 链（质量门/回退不变）。
+
+    返回 ``(results, errors)``——results 按输入顺序；单个 URL 失败不拖死
+    整批（收进 errors），全部失败才抛 ALL_FAILED。
+    """
+    opts = opts or {}
+    popts = _provider_opts(cfg, opts.get("timeout"))
+    use = _parse_use(opts.get("use"))
+    if use:
+        _check_provider_names(use)
+        _check_credentials(use, popts)
+        names = use
+    else:
+        names = _credentialed_chain(cfg, "page", popts)
+
+    def run(url: str) -> FetchResult:
+        return _convert_chain(
+            names, lambda svc: svc.fetch(url, timeout=svc.timeout()), popts
+        )
+
+    by_url: dict[str, FetchResult] = {}
+    errors: list[tuple[str, ServiceError]] = []
+    with ThreadPoolExecutor(max_workers=min(8, len(urls))) as ex:
+        futures = {ex.submit(run, u): u for u in urls}
+        for fut in as_completed(futures):
+            url = futures[fut]
+            try:
+                by_url[url] = fut.result()
+            except ServiceError as e:
+                _log(f"[fetch] {url} failed: {e}")
+                errors.append((url, e))
+    results = [by_url[u] for u in urls if u in by_url]
+    if not results:
+        _raise_all_failed("fetch", urls)
+    return results, errors
+
+
 def convert(cfg: dict, path: str, opts: dict | None = None) -> FetchResult:
     """本地文件 → Markdown（file 链）。无 --use → 配置链；有 → 顺序覆盖链。"""
     if not os.path.exists(path):
@@ -281,6 +358,26 @@ def _convert_chain(names, invoke, popts) -> FetchResult:
         )
         return backup
     _raise_all_failed("convert", names)
+
+
+# ── summarize（AI 提炼钩子）─────────────────────────────────────────────────
+
+
+def check_summarize(cfg: dict) -> None:
+    """--summarize 前置校验：缺配置立即 UsageError（exit 2），不浪费搜索/抓取。"""
+    smm.resolve_config(cfg)
+
+
+def summarize_pages(cfg: dict, request: str, results: list[FetchResult]) -> smm.Summary:
+    """fetch/convert 的 --summarize：抓取内容喂 LLM 提炼（引用按 URL 编号）。"""
+    items = [
+        smm.SourceItem(title=r.url, url=r.url, text=r.content, provider=r.provider)
+        for r in results
+    ]
+    t0 = _now()
+    summary = smm.summarize(cfg, request, items)
+    _log(f"[summarize] OK ({_elapsed(t0)}s, {len(summary.citations)} sources)")
+    return summary
 
 
 # ── 列表 ─────────────────────────────────────────────────────────────────────

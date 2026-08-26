@@ -39,9 +39,12 @@ the repo is the skill.
 ```bash
 eztool search "<query>" [--image | --source TAG [--params '{...}']]
                         [--all | --use a,b] [--count N] [--timeout N] [--list-providers]
+                        [--summarize]
 eztool sources                       # data source tag catalog (for --source)
-eztool fetch <url>  [--out x.md] [--use a,b] [--timeout N] [--list-providers]
+eztool fetch <url>... [--out x.md] [--use a,b] [--timeout N] [--list-providers]
+                      [--summarize [--query "focus"]]
 eztool convert <file> [--out x.md] [--use a,b] [--timeout N] [--list-providers]
+                      [--summarize [--query "focus"]]
 eztool config show|set|get|reset|test|clear
 ```
 
@@ -68,6 +71,15 @@ eztool config show|set|get|reset|test|clear
   treat as failure and fall through; 800–1500 = suspicious → kept as backup
   (returned with a stderr warning only if everything else fails). WeChat
   verification pages therefore fall back automatically — never return them.
+- **`--summarize`** (search/fetch/convert): after retrieval, an OpenAI-compatible
+  LLM synthesizes an answer with citations — output is the answer + a Sources
+  list (`[n] title — url **[provider]**`, program-generated, never LLM-written
+  links). Raw results are replaced; LLM failure degrades back to raw output
+  (stderr warning). fetch takes multiple URLs (parallel); for fetch/convert
+  **always add `--query "focus"`** — a concrete question beats the generic
+  summary fallback by a wide margin (search uses its own query as the request).
+  Requires explicit `summarize.base_url` / `summarize.api_key`
+  / `summarize.model` — missing config = exit 2 before any retrieval.
 - **Credentials**: doubao / deepseek / exa / parallel require keys (doubao:
   api_key or ak+sk); anysearch / tavily / keen / firecrawl / jina_reader /
   markdown_new / mineru / anydoc work anonymously (keys raise quota; a mineru

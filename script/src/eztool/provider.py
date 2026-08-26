@@ -91,8 +91,9 @@ class SearchResponse:
 
     query: str
     results: list[SearchResult] = field(default_factory=list)
-    answer: str | None = None   # 仅 deepseek：AI 合成回答
+    answer: str | None = None   # AI 合成回答（deepseek 自带 / --summarize 生成）
     metadata: dict | None = None  # backend / total_results / search_time_ms / request_id
+    citations: list | None = None  # --summarize 的确定性引用表（summarize.Citation）
 
 
 @dataclass

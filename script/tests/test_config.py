@@ -8,10 +8,17 @@ from eztool import provider as prov
 
 class TestDefaults:
     def test_three_section_structure(self):
-        assert set(cfgmod.DEFAULTS) == {"settings", "chains", "providers"}
+        assert set(cfgmod.DEFAULTS) == {"settings", "chains", "providers", "summarize"}
         assert cfgmod.DEFAULTS["settings"]["timeout"] == 30
         assert set(cfgmod.DEFAULTS["chains"]) == {"web", "image", "data", "page", "file"}
         assert set(cfgmod.DEFAULTS["providers"]) == set(prov.SERVICES)
+
+    def test_summarize_section(self):
+        sec = cfgmod.DEFAULTS["summarize"]
+        assert sec["backend"] == "openai"
+        for required in ("base_url", "api_key", "model"):
+            assert sec[required] is None  # 全部显式配置，无默认
+        assert "summarize.api_key" in cfgmod.SECRET_KEYS
 
     def test_chains_default_equals_default_chain(self):
         for cat in ("web", "image", "data", "page", "file"):
