@@ -86,7 +86,7 @@ class TestMetadataAggregation:
 
     def test_auth_required_set(self):
         required = {n for n, cls in prov.SERVICES.items() if cls.auth_required}
-        assert required == {"doubao", "deepseek", "exa"}
+        assert required == {"doubao", "deepseek", "exa", "parallel"}
 
     def test_all_sources_aggregates_40_tags(self):
         sources = prov.all_sources()

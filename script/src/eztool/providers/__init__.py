@@ -14,7 +14,9 @@ from . import (  # noqa: F401  (side-effect: register)
     exa,
     firecrawl,
     jina_reader,
+    keen,
     markdown_new,
     mineru,
+    parallel,
     tavily,
 )

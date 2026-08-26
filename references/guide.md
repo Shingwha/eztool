@@ -52,6 +52,7 @@ unconfigured; naming one explicitly with `--use` errors instead (exit 2).
 | `doubao` (required) | Set `providers.doubao.api_key` (Doubao WebSearch API key), or `providers.doubao.ak` + `providers.doubao.sk` (Volcengine AccessKey/SecretKey) — either one. |
 | `deepseek` (required) | API key from https://platform.deepseek.com → `providers.deepseek.api_key`. |
 | `exa` (required) | API key from https://dashboard.exa.ai → `providers.exa.api_key`. Not in any default chain; use `--use exa` or add it to `chains.web`/`chains.page`. |
+| `parallel` (required) | API key from https://platform.parallel.ai → `providers.parallel.api_key`. Not in any default chain; use `--use parallel` or add it to `chains.web`/`chains.page`. |
 
 These work **anonymously** (rate-limited) — no key needed; setting one raises
 quota:
@@ -60,6 +61,7 @@ quota:
 |---|---|
 | `anysearch` | `providers.anysearch.api_key` |
 | `tavily` | `providers.tavily.api_key` (unset = keyless free mode) |
+| `keen` | `providers.keen.api_key` (unset = keyless public pool, 1000 req/h per IP) |
 | `jina_reader` | `providers.jina_reader.api_key` |
 | `firecrawl` | `providers.firecrawl.api_key` |
 | `mineru` | `providers.mineru.api_key` — a token upgrades to the v4 Precision API (≤200MB/200 pages/batch/HTML); unset = v1 lightweight API (≤10MB/20 pages) |
@@ -75,10 +77,10 @@ eztool config test                            # verify everything you configured
 | Key | Default | Notes |
 |---|---|---|
 | `settings.timeout` | 30 | Global default timeout in seconds |
-| `chains.web` | `doubao,anysearch,deepseek` | Web search fallback chain |
+| `chains.web` | `doubao,anysearch,deepseek,keen` | Web search fallback chain |
 | `chains.image` | `doubao` | Image search fallback chain |
 | `chains.data` | `anysearch` | Data source fallback chain |
-| `chains.page` | `markdown_new,jina_reader,anysearch,tavily,firecrawl` | URL fetch fallback chain |
+| `chains.page` | `markdown_new,jina_reader,anysearch,tavily,firecrawl,keen` | URL fetch fallback chain |
 | `chains.file` | `anydoc,markdown_new,mineru` | Local file parsing fallback chain |
 | `providers.doubao.api_key` / `ak` / `sk` | — (secret) | Doubao credentials: api_key (Bearer) or Volcengine AK+SK |
 | `providers.doubao.auth` | auto | Auth method: `apikey` / `aksk` (empty = auto-detect) |
@@ -95,6 +97,8 @@ eztool config test                            # verify everything you configured
 | `providers.deepseek.thinking` | enabled | `enabled` / `disabled` (enabled: more accurate, slower, costlier) |
 | `providers.deepseek.max_tokens` | 32768 | Max output tokens |
 | `providers.tavily.api_key` | — (secret) | Optional; unset = keyless free mode |
+| `providers.keen.api_key` | — (secret) | Optional; unset = keyless public pool |
+| `providers.parallel.api_key` | — (secret) | Required |
 | `providers.exa.api_key` | — (secret) | Required |
 | `providers.jina_reader.api_key` | — (secret) | Optional; raises quota |
 | `providers.firecrawl.api_key` | — (secret) | Optional; raises quota |
@@ -114,9 +118,9 @@ Rules of thumb:
 - Order matters: first success wins. Cheaper/faster providers go first.
 - Providers needing credentials you haven't set are skipped silently in chains
   (but error when named via `--use`).
-- Some providers are deliberately **not** in the defaults: `exa` (paid),
-  `tavily` for web search, `mineru` for URL fetch. Add them to a chain or name
-  them with `--use`.
+- Some providers are deliberately **not** in the defaults: `exa` / `parallel`
+  (paid, key required), `tavily` for web search, `mineru` for URL fetch. Add
+  them to a chain or name them with `--use`.
 - One-off overrides don't need config changes: `eztool search "q" --use exa`,
   `eztool fetch <url> --use jina_reader,firecrawl`.
 

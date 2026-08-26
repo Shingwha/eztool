@@ -437,3 +437,193 @@ class TestAnySearch:
     def test_non_object_params_is_usage_error(self):
         with pytest.raises(UsageError):
             self.svc.search("web", "q", {"params": "[1, 2]"})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# keen
+# ════════════════════════════════════════════════════════════════════════════
+
+from eztool.providers import keen as keen_mod
+from eztool.providers.keen import KeenProvider
+from eztool.util import NoResultsError
+
+KEEN_ITEM = {
+    "title": "TS Best Practices",
+    "url": "https://example.com/ts",
+    "description": "short summary",
+    "snippet": "longer excerpt from the page",
+    "published_at": "2026-01-15T10:30:00Z",
+}
+
+
+def _keen_search(monkeypatch, configs, payload):
+    captured = {}
+
+    def fake_post_json(url, headers, body, timeout):
+        captured.update(url=url, headers=headers, body=body)
+        return 200, {}, json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(keen_mod, "post_json", fake_post_json)
+    resp = KeenProvider(_popts(keen=configs)).search("web", "q", {})
+    return resp, captured
+
+
+class TestKeenSearch:
+    def test_keyless_uses_public_path_and_title_header(self, monkeypatch):
+        resp, cap = _keen_search(monkeypatch, {}, {"query": "q", "results": [KEEN_ITEM]})
+        assert cap["url"].endswith("/v1/search/public")
+        assert cap["headers"]["X-Keenable-Title"] == "eztool"
+        assert "X-API-Key" not in cap["headers"]
+        assert cap["body"] == {"query": "q"}
+        r = resp.results[0]
+        assert r.snippet == "short summary"
+        assert r.content == "longer excerpt from the page"
+        assert r.extra == {"published_at": "2026-01-15T10:30:00Z"}
+
+    def test_api_key_uses_authed_path(self, monkeypatch):
+        _keen_search(monkeypatch, {"api_key": "keen_k"},
+                     {"query": "q", "results": [KEEN_ITEM]})
+        resp, cap = _keen_search(monkeypatch, {"api_key": "keen_k"},
+                                 {"query": "q", "results": [KEEN_ITEM]})
+        assert cap["url"].endswith("/v1/search")
+        assert cap["headers"]["X-API-Key"] == "keen_k"
+
+    def test_no_results_raises(self, monkeypatch):
+        with pytest.raises(NoResultsError):
+            _keen_search(monkeypatch, {}, {"query": "q", "results": []})
+
+    def test_has_credentials_always_true(self):
+        assert KeenProvider().has_credentials() is True
+
+
+class TestKeenFetch:
+    def test_fetch_parses_markdown_content(self, monkeypatch):
+        rec = _Recorder([json_response({"url": "https://a/", "content": "# hello"})])
+        monkeypatch.setattr("urllib.request.urlopen", rec)
+        result = KeenProvider().fetch("https://a/", timeout=30)
+        assert result.content == "# hello"
+        req = rec.seen[0]
+        assert "/v1/fetch/public?" in req.full_url
+        assert "url=https%3A%2F%2Fa%2F" in req.full_url
+        assert "live=true" in req.full_url
+        assert req.get_header("X-keenable-title") == "eztool"
+
+    def test_fetch_with_key_uses_authed_path(self, monkeypatch):
+        rec = _Recorder([json_response({"content": "# hi"})])
+        monkeypatch.setattr("urllib.request.urlopen", rec)
+        KeenProvider(_popts(keen={"api_key": "keen_k"})).fetch("https://a/", timeout=30)
+        req = rec.seen[0]
+        assert "/v1/fetch?" in req.full_url
+        assert req.get_header("X-api-key") == "keen_k"
+
+    def test_fetch_empty_content_raises(self, monkeypatch):
+        monkeypatch.setattr("urllib.request.urlopen",
+                            _Recorder([json_response({"content": ""})]))
+        with pytest.raises(ServiceError) as exc:
+            KeenProvider().fetch("https://a/", timeout=30)
+        assert exc.value.category == CATEGORY_HTTP
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# parallel
+# ════════════════════════════════════════════════════════════════════════════
+
+from eztool.providers import parallel as parallel_mod
+from eztool.providers.parallel import ParallelProvider
+
+PARALLEL_ITEM = {
+    "url": "https://example.com/p",
+    "title": "Parallel page",
+    "publish_date": "2024-01-15",
+    "excerpts": ["excerpt one", "excerpt two"],
+}
+
+
+def _parallel_post(monkeypatch, payload):
+    captured = {}
+
+    def fake_post_json(url, headers, body, timeout):
+        captured.update(url=url, headers=headers, body=body)
+        return 200, {}, json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(parallel_mod, "post_json", fake_post_json)
+    return captured
+
+
+class TestParallelSearch:
+    def test_search_payload_and_mapping(self, monkeypatch):
+        cap = _parallel_post(monkeypatch, {
+            "search_id": "search_x",
+            "results": [PARALLEL_ITEM],
+            "session_id": "session_x",
+        })
+        svc = ParallelProvider(_popts(parallel={"api_key": "pk"}))
+        resp = svc.search("web", "what is parallel", {"count": 5})
+        assert cap["url"].endswith("/v1/search")
+        assert cap["headers"]["x-api-key"] == "pk"
+        assert cap["body"]["objective"] == "what is parallel"
+        assert cap["body"]["search_queries"] == ["what is parallel"]
+        assert cap["body"]["mode"] == "fast"
+        assert cap["body"]["advanced_settings"] == {"max_results": 5}
+        r = resp.results[0]
+        assert r.snippet == "excerpt one\nexcerpt two"[:300]
+        assert r.content == "excerpt one\n\nexcerpt two"
+        assert r.extra == {"publish_date": "2024-01-15"}
+        assert resp.metadata["search_id"] == "search_x"
+
+    def test_missing_key_raises(self):
+        svc = ParallelProvider(_popts(parallel={}))
+        with pytest.raises(ServiceError):
+            svc.search("web", "q", {})
+
+    def test_no_results_raises(self, monkeypatch):
+        _parallel_post(monkeypatch, {"search_id": "s", "results": [], "session_id": "s"})
+        svc = ParallelProvider(_popts(parallel={"api_key": "pk"}))
+        with pytest.raises(NoResultsError):
+            svc.search("web", "q", {})
+
+
+class TestParallelFetch:
+    def test_fetch_returns_full_content(self, monkeypatch):
+        cap = _parallel_post(monkeypatch, {
+            "extract_id": "e1",
+            "results": [{"url": "https://a/", "title": "t",
+                         "excerpts": ["ex"], "full_content": "# full md"}],
+            "errors": [],
+            "session_id": "s1",
+        })
+        svc = ParallelProvider(_popts(parallel={"api_key": "pk"}))
+        result = svc.fetch("https://a/", timeout=30)
+        assert result.content == "# full md"
+        assert cap["url"].endswith("/v1/extract")
+        assert cap["body"]["urls"] == ["https://a/"]
+        assert cap["body"]["advanced_settings"] == {"full_content": True}
+
+    def test_fetch_falls_back_to_excerpts(self, monkeypatch):
+        _parallel_post(monkeypatch, {
+            "extract_id": "e1",
+            "results": [{"url": "https://a/", "excerpts": ["ex1", "ex2"],
+                         "full_content": None}],
+            "errors": [],
+            "session_id": "s1",
+        })
+        svc = ParallelProvider(_popts(parallel={"api_key": "pk"}))
+        assert svc.fetch("https://a/", timeout=30).content == "ex1\n\nex2"
+
+    def test_fetch_error_entries_raise_with_detail(self, monkeypatch):
+        _parallel_post(monkeypatch, {
+            "extract_id": "e1",
+            "results": [],
+            "errors": [{"url": "https://a/", "error_type": "fetch_error",
+                        "http_status_code": 500, "content": "boom"}],
+            "session_id": "s1",
+        })
+        svc = ParallelProvider(_popts(parallel={"api_key": "pk"}))
+        with pytest.raises(ServiceError) as exc:
+            svc.fetch("https://a/", timeout=30)
+        assert "boom" in str(exc.value)
+
+    def test_fetch_missing_key_raises(self):
+        svc = ParallelProvider(_popts(parallel={}))
+        with pytest.raises(ServiceError):
+            svc.fetch("https://a/", timeout=30)

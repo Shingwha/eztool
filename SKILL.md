@@ -3,7 +3,8 @@ name: eztool
 description: >-
   Unified CLI for search and document conversion: `eztool search "<q>"`
   (web by default; `--image` for images; `--source <tag>` for 40 specialized
-  data sources; Doubao / AnySearch / DeepSeek / Tavily / Exa), `eztool fetch
+  data sources; Doubao / AnySearch / DeepSeek / Tavily / Exa / Keen /
+  Parallel), `eztool fetch
   <url>` and `eztool convert <file>` (URL or local file to Markdown), and
   `eztool config`. Use whenever the user asks to search the web (联网搜索 /
   豆包 / 火山引擎 / DeepSeek 搜索 / 查最新信息), search images, search
@@ -67,9 +68,10 @@ eztool config show|set|get|reset|test|clear
   treat as failure and fall through; 800–1500 = suspicious → kept as backup
   (returned with a stderr warning only if everything else fails). WeChat
   verification pages therefore fall back automatically — never return them.
-- **Credentials**: doubao / deepseek / exa require keys (doubao: api_key or ak+sk);
-  anysearch / tavily / firecrawl / jina_reader / markdown_new / mineru / anydoc
-  work anonymously (keys raise quota; a mineru token upgrades to the v4 API).
+- **Credentials**: doubao / deepseek / exa / parallel require keys (doubao:
+  api_key or ak+sk); anysearch / tavily / keen / firecrawl / jina_reader /
+  markdown_new / mineru / anydoc work anonymously (keys raise quota; a mineru
+  token upgrades to the v4 API).
   On credential errors tell the user `eztool config set providers.<name>.api_key`;
   **never hardcode keys**. Config lives at `~/.config/eztool/config.json`.
 - **Exit codes**: 0 success / 1 operational failure (incl. no results) / 2 usage
