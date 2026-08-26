@@ -29,7 +29,6 @@ API_BASE = "https://api.parallel.ai"
 SEARCH_URL = f"{API_BASE}/v1/search"
 EXTRACT_URL = f"{API_BASE}/v1/extract"
 DEFAULT_TIMEOUT = 30
-DEFAULT_MAX_RESULTS = 20
 
 
 @register
@@ -74,19 +73,21 @@ class ParallelProvider(Provider):
         return f"OK ({n} results, {elapsed:.1f}s)"
 
     def search(self, category: str, query: str, opts: dict) -> SearchResponse:
-        try:
-            count = int(opts.get("count") or DEFAULT_MAX_RESULTS)
-        except (TypeError, ValueError):
-            count = DEFAULT_MAX_RESULTS
-        count = max(1, count)  # API 默认 10，上限未文档化
-
         q = query.strip()
         body: dict = {
             "objective": q,
             "search_queries": [q],
             "mode": "fast",  # 精简：固定 fast 档（默认均衡）
-            "advanced_settings": {"max_results": count},
         }
+        # 不传 max_results → 服务端默认（API 默认 10）；--count 显式覆盖
+        count = opts.get("count")
+        if count is not None:
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                count = None
+            if count is not None:
+                body["advanced_settings"] = {"max_results": max(1, count)}
 
         data = self._post(SEARCH_URL, body, self.timeout(DEFAULT_TIMEOUT))
 

@@ -36,8 +36,7 @@ from ..util import (
 
 DEFAULT_BASE_URL = "https://api.anysearch.com"
 MCP_ENDPOINT = "https://api.anysearch.com/mcp"  # MCP JSON-RPC 通道（extract 等工具）
-DEFAULT_MAX_RESULTS = 20  # 与 config 声明的默认值一致
-API_MAX_RESULTS = 20  # API 上限
+API_MAX_RESULTS = 20  # 显式传参时的上限
 DEFAULT_TIMEOUT = 60
 
 # HTTP 状态码 → 语义码（原 core.py 映射，保留）
@@ -61,7 +60,7 @@ def _call_api(
     query: str,
     *,
     api_key: str | None = None,
-    max_results: int = DEFAULT_MAX_RESULTS,
+    max_results: int | None = None,
     base_url: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
@@ -77,8 +76,9 @@ def _call_api(
 
     body: dict[str, Any] = {
         "query": query.strip(),
-        "max_results": max_results,
     }
+    if max_results is not None:  # 不传 → 服务端默认条数
+        body["max_results"] = max_results
 
     headers: dict[str, str] = {}
     if api_key:
@@ -159,7 +159,7 @@ class AnySearchProvider(Provider):
     # 匿名可用（限流）；配了 key 走正式额度
     config = {
         "api_key": {"secret": True, "hint": "AnySearch API key (optional; works anonymously)"},
-        "max_results": {"default": 20, "hint": "number of results (1-20)"},
+        "max_results": {"hint": "result count (1-20); unset = server default"},
     }
     priority = {"web": 30}  # page 不声明 priority → 不进默认链（限制多，--use 用）
 
@@ -183,17 +183,19 @@ class AnySearchProvider(Provider):
         """执行 AnySearch 网页搜索。
 
         opts 可选键（缺失用 .get 兜底）：
-            count(int)  结果数，覆盖 providers.anysearch.max_results
-                        （默认 20，API 上限 20，超限 clamp）
+            count(int)  结果数（显式覆盖 providers.anysearch.max_results 或
+                        服务端默认；1-20，超限 clamp；不传 = 服务端默认）
         """
         count = opts.get("count")
         if count is None:
-            count = self.cfg.get("max_results", DEFAULT_MAX_RESULTS)
-        try:
-            count = int(count)
-        except (TypeError, ValueError):
-            count = DEFAULT_MAX_RESULTS
-        count = max(1, min(count, API_MAX_RESULTS))
+            count = self.cfg.get("max_results")  # config 键 = 显式覆盖通道
+        if count is not None:
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                count = None
+            if count is not None:
+                count = max(1, min(count, API_MAX_RESULTS))
 
         data = _call_api(
             query,

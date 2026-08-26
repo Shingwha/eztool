@@ -22,8 +22,8 @@ Zero dependencies, pure stdlib; the repo is the skill.
 | The user wants | Run |
 |---|---|
 | Web search / fact-check / latest info | `eztool search "<q>"` |
-| AI-synthesized answer with citations | `eztool search "<q>" --summarize` (or `--all --summarize` for broad coverage) |
 | Broad search (all default providers in parallel, merged + deduped) | `eztool search "<q>" --all` |
+| One synthesized answer across multiple sources | `eztool search "<q>" --all --summarize` — multi-provider results fed to the LLM and written up with citations; **prefer this whenever `--all` or a multi-provider `--use` is involved** (needs `summarize.*` config — see references/guide.md) |
 | Read a full webpage / article | `eztool fetch <url>` |
 | Convert a local file (PDF/DOCX/XLSX/CSV…) to Markdown | `eztool convert <file> [--out out.md]` |
 | Configure credentials / fallback chains | `eztool config` (see references/guide.md) |
@@ -45,7 +45,15 @@ eztool config show|set|get|reset|test|clear
   stop at first success). Omit → the configured `chains.*` fallback chain.
 - Named providers are never credential-skipped — naming one without credentials is
   an error (exit 2).
-- `--count` defaults are sane (web 20) — don't add it without a reason.
+- **Write `<query>` as a short question, not keyword piles.** The providers are
+  natural-language friendly and a question beats bare keywords in practice
+  (e.g. `"how do tokio and async-std compare in 2026?"` finds decision-oriented
+  results, while `"tokio async-std"` drifts toward tutorials). Include the key
+  terms inside the question. With `--summarize`, the query doubles as the
+  synthesis request — a question steers it, keywords don't.
+- `--count N` is an explicit override: omit it and each provider uses its
+  **server-side default** (tavily 5, parallel 10, doubao/anysearch/keen server-set).
+  Don't add `--count` without a reason.
 
 ## Core rules
 
@@ -67,6 +75,12 @@ eztool config show|set|get|reset|test|clear
   (stderr warning). fetch takes multiple URLs (parallel); for fetch/convert
   **always add `--query "focus"`** — a concrete question beats the generic
   summary fallback by a wide margin (search uses its own query as the request).
+  **Multi-provider searches prefer `--summarize`**: the point of `--all` /
+  multi-provider `--use` is cross-source coverage, and the LLM synthesis is
+  what turns overlapping raw results into one deduplicated, cited answer — so
+  use `eztool search "<q>" --all --summarize` (or `--use a,b --summarize`)
+  whenever summaries are configured; a plain single-provider search without
+  `--summarize` is the lightweight default.
   Requires explicit `summarize.base_url` / `summarize.api_key`
   / `summarize.model` — missing config = exit 2 before any retrieval.
 - **Credentials**: doubao / parallel require keys (doubao: api_key or ak+sk);
@@ -81,7 +95,10 @@ eztool config show|set|get|reset|test|clear
 
 ## Agent workflow
 
-1. **Search**: `eztool search "<query>"`; `--all` for broad multi-source coverage.
+1. **Search**: `eztool search "<one-sentence question>"` (ask what you want to
+   know — a question query beats keyword lists); for broad coverage add `--all`, and
+   pair it with `--summarize` so the merged results come back as one cited
+   answer rather than raw lists (needs `summarize.*` config).
 2. **Read full text**: `eztool fetch <url>` for URLs in results (output is never
    truncated); `eztool convert <file> --out out.md` for local files.
 3. **Credential errors** (exit 2): guide the user through

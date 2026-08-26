@@ -85,7 +85,7 @@ class TestMetadataAggregation:
     def test_secret_flags_and_defaults(self):
         m = prov.provider_config_map()
         assert m["doubao"]["api_key"]["secret"] is True
-        assert m["doubao"]["count_web"]["default"] == 20
+        assert m["doubao"]["count_web"]["default"] is None  # 未设 = 服务端默认
         assert m["parallel"]["api_key"]["secret"] is True  # auth_required 配套
 
     def test_auth_required_set(self):

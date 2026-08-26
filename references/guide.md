@@ -86,13 +86,13 @@ eztool config test                            # verify everything you configured
 | `chains.file` | `anydoc,markdown_new,mineru` | Local file parsing fallback chain |
 | `providers.doubao.api_key` / `ak` / `sk` | — (secret) | Doubao credentials: api_key (Bearer) or Volcengine AK+SK |
 | `providers.doubao.auth` | auto | Auth method: `apikey` / `aksk` (empty = auto-detect) |
-| `providers.doubao.count_web` | 20 | Web result count (1–50) |
+| `providers.doubao.count_web` | unset | Web result count (1–50); unset = server default |
 | `providers.doubao.need_url` / `need_content` | false | Only return results with landing URLs / with full content |
 | `providers.doubao.content_formats` | — | Content format: `text` / `markdown` |
 | `providers.doubao.time_range` | — | `OneDay/OneWeek/OneMonth/OneYear` or `YYYY-MM-DD..YYYY-MM-DD` |
 | `providers.doubao.industry` | — | Industry search: `finance` / `game` / `gov` |
 | `providers.anysearch.api_key` | — (secret) | Optional; raises quota |
-| `providers.anysearch.max_results` | 20 | Number of results (1–20) |
+| `providers.anysearch.max_results` | unset | Result count (1–20); unset = server default |
 | `providers.tavily.api_key` | — (secret) | Optional; unset = keyless free mode |
 | `providers.keen.api_key` | — (secret) | Optional; unset = keyless public pool |
 | `providers.parallel.api_key` | — (secret) | Required |

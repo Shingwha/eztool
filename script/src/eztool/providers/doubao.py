@@ -230,12 +230,13 @@ def _opt_str(opts: dict, d: dict, key: str) -> Any:
 
 
 def _build_body(query: str, opts: dict, d: dict) -> dict:
-    max_count, default_count = 50, int(d.get("count_web", 10))
     body: dict = {"Query": query, "SearchType": "web"}
+    # 不传 Count → 服务端默认条数；--count 或 count_web 配置显式覆盖
     count = opts.get("count")
     if count is None:
-        count = default_count
-    body["Count"] = max(1, min(int(count), max_count))
+        count = d.get("count_web")
+    if count is not None:
+        body["Count"] = max(1, min(int(count), 50))
 
     filt: dict = {}
     if _opt_bool(opts, d, "need_content"):
@@ -308,7 +309,7 @@ class DoubaoProvider(Provider):
         "ak": {"secret": True, "hint": "Volcengine AccessKey"},
         "sk": {"secret": True, "hint": "Volcengine SecretKey"},
         "auth": {"hint": "auth method: apikey / aksk (leave empty to auto-detect)"},
-        "count_web": {"default": 20, "hint": "web result count (1-50)"},
+        "count_web": {"hint": "web result count (1-50); unset = server default"},
         "need_url": {"default": False, "hint": "only return results with landing URLs (true/false)"},
         "need_content": {"default": False, "hint": "only return results with full content (true/false)"},
         "content_formats": {"hint": "content format: text / markdown"},
