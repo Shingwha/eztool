@@ -1,14 +1,12 @@
 ---
 name: eztool
 description: >-
-  Unified CLI for web search and document conversion: `eztool search "<q>"`
-  (web search via Tavily / Doubao / AnySearch / Keen / Parallel),
-  `eztool fetch <url>` and `eztool convert <file>` (URL or local file to
-  Markdown), and `eztool config`. Use whenever the user asks to search the
-  web (联网搜索 / 豆包 / 火山引擎 / 查最新信息), read the full content of a
-  webpage or article URL, or convert a local file (PDF/DOCX/XLSX/CSV…) to
-  Markdown. One command (eztool) covers search AND conversion — use it even
-  if the user doesn't name a specific backend.
+  Unified CLI for web search, reading webpage content and document
+  conversion. Use whenever the user asks to search the web (联网搜索 / 豆包 /
+  火山引擎 / 查最新信息), fetch/read the content of a webpage or article URL
+  (获取网页内容 / 读取网页 / 查看文章全文), or convert a local file
+  (PDF/DOCX/XLSX/CSV…) to Markdown. One command covers search, reading AND
+  conversion — use it even if the user doesn't name a specific backend.
 ---
 
 # eztool
@@ -51,9 +49,17 @@ eztool config show|set|get|reset|test|clear
   results, while `"tokio async-std"` drifts toward tutorials). Include the key
   terms inside the question. With `--summarize`, the query doubles as the
   synthesis request — a question steers it, keywords don't.
-- `--count N` is an explicit override: omit it and each provider uses its
-  **server-side default** (tavily 5, parallel 10, doubao/anysearch/keen server-set).
-  Don't add `--count` without a reason.
+- **Time-sensitive queries: use absolute dates, never relative words.**
+  Search engines have no context for "today"/"this week" — write
+  `"Chengdu weather 2026-08-26"` instead of `"Chengdu weather today"`, and
+  `"stock market 2026-08-24..2026-08-30"` instead of `"stock market this week"`
+  (relative words pull stale pages into the results). Single day →
+  `YYYY-MM-DD`; week/month → the `YYYY-MM-DD..YYYY-MM-DD` range (week starts
+  Monday); year → `YYYY`.
+- **`--count` is optional — omit it by default.** The request then carries
+  no count field and each provider's **server-side default** applies
+  (tavily 5, parallel 10, doubao/anysearch/keen server-set). Add `--count N`
+  only when you want a specific result count.
 
 ## Core rules
 
@@ -64,10 +70,11 @@ eztool config show|set|get|reset|test|clear
   Stale names in configured chains (e.g. after removing a provider) are warned
   about on stderr and dropped — never fatal.
 - **Quality gate** (fetch/convert): content whose first 200 chars hit blocking
-  phrases ("环境异常"/captcha/Cloudflare…) and is <800 chars = bot-check page →
-  treat as failure and fall through; 800–1500 = suspicious → kept as backup
-  (returned with a stderr warning only if everything else fails). WeChat
-  verification pages therefore fall back automatically — never return them.
+  phrases (captcha / Cloudflare / Chinese verification-wall wording) and is
+  <800 chars = bot-check page → treat as failure and fall through; 800–1500 =
+  suspicious → kept as backup (returned with a stderr warning only if
+  everything else fails). WeChat verification pages therefore fall back
+  automatically — never return them.
 - **`--summarize`** (search/fetch/convert): after retrieval, an OpenAI-compatible
   LLM synthesizes an answer with citations — output is the answer + a Sources
   list (`[n] title — url **[provider]**`, program-generated, never LLM-written
