@@ -1,10 +1,8 @@
-"""eztool 统一入口：search / sources / fetch / convert / config。
+"""eztool 统一入口：search / fetch / convert / config。
 
-命令面（类别是选项，不是子命令）：
+命令面：
 
-- ``eztool search "<q>"``：通用搜索；``--image`` 图片搜索；``--source <tag>``
-  专业数据源（配合 ``--params`` 传标签额外参数）；``--all`` 默认链全员并行。
-- ``eztool sources``：数据源标签清单（注册表聚合）。
+- ``eztool search "<q>"``：web 搜索；``--all`` 默认链全员并行。
 - ``eztool fetch <url>...``：URL → Markdown（多 URL 并行）；``eztool convert <file>``：本地文件 → Markdown。
 - ``--use a,b``：search = 并行合并；fetch/convert = 顺序覆盖链；1 个 = 单跑。
   缺省走 ``chains.*`` 配置回退链。
@@ -19,26 +17,15 @@ import argparse
 import getpass
 import os
 import sys
+from typing import Any
 from urllib.parse import urlparse
 
 from . import __version__
 from . import api
 from . import config as cfgmod
 from . import provider as prov
-from .format import (
-    format_data,
-    format_image,
-    format_search,
-    format_sources,
-    format_summary,
-)
+from .format import format_search, format_summary
 from .util import EztoolError, ServiceError, UsageError
-
-_SEARCH_FORMATTERS = {
-    "web": format_search,
-    "image": format_image,
-    "data": format_data,
-}
 
 
 def _add_param(parser: argparse.ArgumentParser, pname: str, spec) -> None:
@@ -69,23 +56,15 @@ def _add_use_timeout(p: argparse.ArgumentParser, convert_mode: bool = False) -> 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="eztool",
-        description="Search (search/sources) + fetch + convert + config. "
+        description="Search + fetch + convert + config. "
                     "One command for searching, reading and converting.",
     )
     p.add_argument("--version", action="version", version=f"eztool {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
-    # ── search：类别 = 选项（默认 web）──
-    sp = sub.add_parser("search", help="search: general web by default; --image for images; "
-                                       "--source for specialized data sources")
+    # ── search：web 搜索 ──
+    sp = sub.add_parser("search", help="search the web")
     sp.add_argument("query", nargs="?", help="search query (omit with --list-providers)")
-    mode = sp.add_mutually_exclusive_group()
-    mode.add_argument("--image", action="store_true",
-                      help="image search (direct links + size/shape metadata)")
-    mode.add_argument("--source", metavar="TAG",
-                      help="specialized data source tag (see eztool sources)")
-    sp.add_argument("--params", metavar="JSON", default=None,
-                    help="with --source: extra tag params, e.g. '{\"type\":\"quote\"}'")
     breadth = sp.add_mutually_exclusive_group()
     breadth.add_argument("--all", action="store_true",
                          help="run the whole default chain in parallel + merge/dedup "
@@ -104,17 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--list-providers", action="store_true",
                     help="list providers available for this category and their "
                          "credential status")
-    # 类别特有参数（如 doubao 的图片尺寸/形状过滤）由 provider 声明自动并入
-    merged_params: dict = {}
-    for cat in prov.SEARCH_CATEGORIES:
-        merged_params.update(prov.category_params(cat))
-    for pname, spec in merged_params.items():
+    # 类别特有参数（provider 声明自动并入）
+    for pname, spec in prov.category_params("web").items():
         _add_param(sp, pname, spec)
     sp.set_defaults(func=cmd_search)
-
-    # ── sources：数据源标签清单 ──
-    sub.add_parser("sources", help="list all data source tags (use with search --source)"
-                   ).set_defaults(func=cmd_sources)
 
     # ── fetch：URL → Markdown（支持多 URL，并行抓取）──
     fp = sub.add_parser("fetch", help="fetch URL(s) as Markdown (online chain; "
@@ -173,52 +145,31 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-# ── search / sources ──────────────────────────────────────────────────────────
-
-
-def _search_category(args: argparse.Namespace) -> str:
-    if args.image:
-        return "image"
-    if args.source:
-        return "data"
-    return "web"
-
+# ── search ───────────────────────────────────────────────────────────────────
 
 def cmd_search(args: argparse.Namespace) -> None:
-    category = _search_category(args)
     if args.list_providers:
-        _print_category_providers(category)
+        _print_category_providers("web")
         return
     if not args.query:
         raise UsageError("missing search query (or use --list-providers to see "
                          "available providers)")
-    if args.summarize and category == "image":
-        raise UsageError("--summarize does not apply to image search "
-                         "(results have no text content)")
     cfg = cfgmod.load_config()
     if args.summarize:
         api.check_summarize(cfg)  # 缺配置 fail-fast（exit 2），不浪费搜索
     opts: dict = {"use": args.use, "all": args.all,
                   "count": args.count, "timeout": args.timeout,
                   "summarize": args.summarize}
-    if args.source:
-        opts["source"] = args.source
-    if args.params:
-        opts["params"] = args.params
-    for pname in prov.category_params(category):
+    for pname in prov.category_params("web"):
         v = getattr(args, pname, None)
         if v is not None:
             opts[pname] = v
     opts = {k: v for k, v in opts.items() if v is not None}
-    resp = api.search(cfg, category, args.query, opts)
+    resp = api.search(cfg, "web", args.query, opts)
     if args.summarize and resp.answer:
         print(format_summary(resp.answer, resp.citations or [], resp.query))
     else:  # 未要求总结，或总结失败降级（stderr 已有 [summarize] failed 日志）
-        print(_SEARCH_FORMATTERS[category](resp))
-
-
-def cmd_sources(args: argparse.Namespace) -> None:
-    print(format_sources(api.list_sources()))
+        print(format_search(resp))
 
 
 def _print_category_providers(category: str) -> None:
@@ -379,7 +330,7 @@ def cmd_config_get(args: argparse.Namespace) -> None:
 
 def cmd_config_set(args: argparse.Namespace) -> None:
     _check_key(args.key)
-    cfg = cfgmod.load_config()
+    overrides = cfgmod.load_overrides()  # 稀疏：文件只存显式设置过的键
     if args.value is None:
         hint = cfgmod.KEY_HINTS.get(args.key, "")
         if args.key in cfgmod.SECRET_KEYS:
@@ -389,22 +340,37 @@ def cmd_config_set(args: argparse.Namespace) -> None:
     else:
         raw = args.value
     value = cfgmod.parse_value(args.key, raw)
-    cfgmod.set_key(cfg, args.key, value)
-    cfgmod.save_config(cfg)
+    cfgmod.set_key(overrides, args.key, value)
+    cfgmod.save_config(overrides)
     print(f"{args.key} = {cfgmod.mask_key(args.key, value)}")
 
 
 def cmd_config_reset(args: argparse.Namespace) -> None:
+    """删掉覆盖值回落默认——不从默认值再写回文件（保持稀疏）。"""
     _check_key(args.key)
-    cfg = cfgmod.load_config()
-    default = cfgmod.DEFAULTS
-    for part in args.key.split("."):
-        default = default.get(part, None)
-        if default is None:
+    overrides = cfgmod.load_overrides()
+    parts = args.key.split(".")
+    node: Any = overrides
+    for part in parts[:-1]:
+        node = node.get(part) if isinstance(node, dict) else None
+        if node is None:
             break
-    cfgmod.set_key(cfg, args.key, default)
-    cfgmod.save_config(cfg)
+    if isinstance(node, dict):
+        node.pop(parts[-1], None)
+        _prune_empty_dicts(overrides)
+    if overrides or os.path.isfile(cfgmod.config_path()):
+        cfgmod.save_config(overrides)  # 有文件或其他覆盖才写；纯 no-op 不建文件
+    default = cfgmod.get_key(cfgmod.load_config(), args.key)
     print(f"reset {args.key} = {default}")
+
+
+def _prune_empty_dicts(node: dict) -> None:
+    """自底向上清掉 reset 后残留的空 dict 段（如 providers.foo = {}）。"""
+    for key in list(node):
+        if isinstance(node[key], dict):
+            _prune_empty_dicts(node[key])
+            if not node[key]:
+                del node[key]
 
 
 def cmd_config_clear(args: argparse.Namespace) -> None:

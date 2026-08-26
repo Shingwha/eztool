@@ -90,7 +90,7 @@ class NoResultsError(ServiceError):
 
 # ── HTTP ───────────────────────────────────────────────────────────────────
 
-USER_AGENT = "Mozilla/5.0 (compatible; eztool/0.3)"
+USER_AGENT = "Mozilla/5.0 (compatible; eztool/0.5)"
 
 
 def http_get(target: str, headers: dict, timeout: int):

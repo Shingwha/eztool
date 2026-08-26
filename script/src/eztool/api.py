@@ -39,7 +39,7 @@ from .util import (
 from . import providers as _providers  # noqa: F401  (side-effect: 注册)
 
 __all__ = ["search", "fetch", "fetch_many", "convert", "summarize_pages",
-           "check_summarize", "list_category_providers", "list_sources"]
+           "check_summarize", "list_category_providers", "list_providers"]
 
 
 # ── 配置 → ProviderOpts ──────────────────────────────────────────────────────
@@ -93,11 +93,16 @@ def _check_credentials(names: list[str], popts: ProviderOpts) -> None:
 
 
 def _credentialed_chain(cfg: dict, category: str, popts: ProviderOpts) -> list[str]:
-    """配置回退链，过滤掉 auth_required 但未配凭证的 provider（匿名可用的不跳）。"""
+    """配置回退链，过滤未知 provider 名（旧配置残留，警告后剔除）与
+    auth_required 但未配凭证的 provider（匿名可用的不跳）。"""
     chain = cfgmod.get_key(cfg, f"chains.{category}") or prov.default_chain(category)
-    _check_provider_names(chain)
+    known = [n for n in chain if n in prov.SERVICES]
+    unknown = [n for n in chain if n not in prov.SERVICES]
+    if unknown:
+        _log(f"warning: chains.{category} contains unknown providers "
+             f"(removed): {', '.join(unknown)}")
     return [
-        n for n in chain
+        n for n in known
         if not (prov.SERVICES[n].auth_required
                 and not prov.SERVICES[n](popts).has_credentials())
     ]
@@ -391,8 +396,3 @@ def list_category_providers(category: str) -> list[str]:
 def list_providers() -> list[str]:
     """全部 provider 名（排序）。"""
     return sorted(prov.SERVICES)
-
-
-def list_sources() -> list[tuple[str, str]]:
-    """全部数据源标签（注册表聚合，``eztool sources`` 输出）。"""
-    return prov.all_sources()

@@ -9,9 +9,7 @@ from __future__ import annotations
 from . import (  # noqa: F401  (side-effect: register)
     anydoc,
     anysearch,
-    deepseek,
     doubao,
-    exa,
     firecrawl,
     jina_reader,
     keen,

@@ -23,7 +23,7 @@ class JinaReaderProvider(Provider):
         "api_key": {"secret": True, "hint": "Jina API key (optional; anonymous access is rate-limited)"},
         "timeout": {"default": 10, "hint": "jina timeout in seconds"},
     }
-    priority = {"page": 20}
+    priority = {"page": 30}
 
     def build_headers(self) -> dict:
         headers = super().build_headers()

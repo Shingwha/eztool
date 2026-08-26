@@ -10,7 +10,7 @@ class TestDefaults:
     def test_three_section_structure(self):
         assert set(cfgmod.DEFAULTS) == {"settings", "chains", "providers", "summarize"}
         assert cfgmod.DEFAULTS["settings"]["timeout"] == 30
-        assert set(cfgmod.DEFAULTS["chains"]) == {"web", "image", "data", "page", "file"}
+        assert set(cfgmod.DEFAULTS["chains"]) == {"web", "page", "file"}
         assert set(cfgmod.DEFAULTS["providers"]) == set(prov.SERVICES)
 
     def test_summarize_section(self):
@@ -21,7 +21,7 @@ class TestDefaults:
         assert "summarize.api_key" in cfgmod.SECRET_KEYS
 
     def test_chains_default_equals_default_chain(self):
-        for cat in ("web", "image", "data", "page", "file"):
+        for cat in ("web", "page", "file"):
             assert cfgmod.DEFAULTS["chains"][cat] == prov.default_chain(cat)
 
     def test_provider_sections_have_timeout_and_declared_keys(self):
@@ -83,3 +83,16 @@ class TestLoadSave:
         cfg = cfgmod.load_config()
         assert cfg["settings"]["timeout"] == 7
         assert cfg["chains"] == cfgmod.DEFAULTS["chains"]  # 未覆盖段保留默认
+
+    def test_load_overrides_returns_raw_file(self, isolated_config):
+        path = isolated_config / "config.json"
+        path.write_text(json.dumps({"providers": {"keen": {"api_key": "k"}}}),
+                        encoding="utf-8")
+        # 原始覆盖值：不做默认值合并（set/reset 的写入基础）
+        assert cfgmod.load_overrides() == {"providers": {"keen": {"api_key": "k"}}}
+        merged = cfgmod.load_config()
+        assert merged["providers"]["keen"]["api_key"] == "k"
+        assert merged["chains"] == cfgmod.DEFAULTS["chains"]
+        # 损坏文件 → 空覆盖，静默回退默认
+        path.write_text("{ broken", encoding="utf-8")
+        assert cfgmod.load_overrides() == {}

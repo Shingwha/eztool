@@ -25,7 +25,6 @@ from typing import Any
 from urllib.parse import quote
 
 from ..provider import (
-    ParamSpec,
     Provider,
     SearchResponse,
     SearchResult,
@@ -227,104 +226,51 @@ def _opt_str(opts: dict, d: dict, key: str) -> Any:
     return d.get(key)
 
 
-def _opt_int(opts: dict, d: dict, key: str) -> Any:
-    v = opts.get(key)
-    if v is not None:
-        return v
-    return d.get(key)
-
-
 # --- API body 构造（参数映射与原 api.py 一致）--------------------------------
 
 
-def _build_body(query: str, opts: dict, d: dict, image: bool) -> dict:
-    if image:
-        max_count, default_count = 5, int(d.get("count_image", 5))
-        body: dict = {"Query": query, "SearchType": "image"}
-    else:
-        max_count, default_count = 50, int(d.get("count_web", 10))
-        body = {"Query": query, "SearchType": "web"}
+def _build_body(query: str, opts: dict, d: dict) -> dict:
+    max_count, default_count = 50, int(d.get("count_web", 10))
+    body: dict = {"Query": query, "SearchType": "web"}
     count = opts.get("count")
     if count is None:
         count = default_count
     body["Count"] = max(1, min(int(count), max_count))
 
     filt: dict = {}
-    if image:
-        for key, field in (("width_min", "ImageWidthMin"), ("width_max", "ImageWidthMax"),
-                           ("height_min", "ImageHeightMin"), ("height_max", "ImageHeightMax")):
-            v = opts.get(key)
-            if v is not None:
-                filt[field] = v
-        shapes = opts.get("shapes")
-        if shapes:
-            parts = [s for s in str(shapes).split("|") if s]
-            if parts:
-                filt["ImageShapes"] = parts
-    else:
-        if _opt_bool(opts, d, "need_content"):
-            filt["NeedContent"] = True
-        if _opt_bool(opts, d, "need_url"):
-            filt["NeedUrl"] = True
-        sites = _opt_str(opts, d, "sites")
-        if sites:
-            filt["Sites"] = sites
-        block_hosts = _opt_str(opts, d, "block_hosts")
-        if block_hosts:
-            filt["BlockHosts"] = block_hosts
-        auth_info_level = _opt_int(opts, d, "auth_info_level")
-        if auth_info_level is not None:
-            filt["AuthInfoLevel"] = auth_info_level
+    if _opt_bool(opts, d, "need_content"):
+        filt["NeedContent"] = True
+    if _opt_bool(opts, d, "need_url"):
+        filt["NeedUrl"] = True
     if filt:
         body["Filter"] = filt
 
-    if not image:
-        time_range = _opt_str(opts, d, "time_range")
-        if time_range:
-            body["TimeRange"] = time_range
-        content_formats = _opt_str(opts, d, "content_formats")
-        if content_formats:
-            body["ContentFormats"] = content_formats
-        industry = _opt_str(opts, d, "industry")
-        if industry:
-            body["Industry"] = industry
-
-    if _opt_bool(opts, d, "query_rewrite"):
-        body["QueryControl"] = {"QueryRewrite": True}
+    time_range = _opt_str(opts, d, "time_range")
+    if time_range:
+        body["TimeRange"] = time_range
+    content_formats = _opt_str(opts, d, "content_formats")
+    if content_formats:
+        body["ContentFormats"] = content_formats
+    industry = _opt_str(opts, d, "industry")
+    if industry:
+        body["Industry"] = industry
     return body
 
 
 # --- 结果转换 -----------------------------------------------------------------
 
 
-def _to_results(payload: dict, image: bool) -> list[SearchResult]:
+def _to_results(payload: dict) -> list[SearchResult]:
     result = payload.get("Result") or {}
-    items = result.get("ImageResults" if image else "WebResults") or []
+    items = result.get("WebResults") or []
     out: list[SearchResult] = []
     for item in items:
         title = item.get("Title") or "(untitled)"
         url = item.get("Url") or ""
-        if image:
-            img = item.get("Image") or {}
-            url = img.get("Url") or url
-            snippet = ""
-            extra: dict | None = None
-            if img.get("Width") or img.get("Height") or img.get("Shape"):
-                extra = {}
-                if img.get("Width") is not None:
-                    extra["width"] = img["Width"]
-                if img.get("Height") is not None:
-                    extra["height"] = img["Height"]
-                if img.get("Shape"):
-                    extra["shape"] = img["Shape"]
-            if item.get("RankScore") is not None:
-                extra = extra or {}
-                extra["score"] = item["RankScore"]
-        else:
-            snippet = item.get("Summary") or item.get("Snippet") or ""
-            extra = None
-            if item.get("RankScore") is not None:
-                extra = {"score": item["RankScore"]}
+        snippet = item.get("Summary") or item.get("Snippet") or ""
+        extra = None
+        if item.get("RankScore") is not None:
+            extra = {"score": item["RankScore"]}
         out.append(SearchResult(
             title=title, url=url, snippet=snippet,
             content=item.get("Content") or None, extra=extra,
@@ -355,7 +301,7 @@ class DoubaoProvider(Provider):
     """doubao 搜索后端（API Key Bearer 或火山引擎 AK/SK 签名）。"""
 
     name = "doubao"
-    categories = frozenset({"web", "image"})
+    categories = frozenset({"web"})
     # 配置键（自动生成 config show/set 的键、默认值、secret 脱敏、提示）
     config = {
         "api_key": {"secret": True, "hint": "Doubao WebSearch API key (Bearer)"},
@@ -363,25 +309,14 @@ class DoubaoProvider(Provider):
         "sk": {"secret": True, "hint": "Volcengine SecretKey"},
         "auth": {"hint": "auth method: apikey / aksk (leave empty to auto-detect)"},
         "count_web": {"default": 20, "hint": "web result count (1-50)"},
-        "count_image": {"default": 5, "hint": "image result count (1-5)"},
         "need_url": {"default": False, "hint": "only return results with landing URLs (true/false)"},
         "need_content": {"default": False, "hint": "only return results with full content (true/false)"},
         "content_formats": {"hint": "content format: text / markdown"},
         "time_range": {"hint": "time range: OneDay/OneWeek/OneMonth/OneYear or YYYY-MM-DD..YYYY-MM-DD"},
         "industry": {"hint": "industry search: finance / game / gov"},
     }
-    priority = {"web": 10, "image": 10}  # 默认链排序（小在前）
+    priority = {"web": 20}  # 默认链排序（小在前）
     auth_required = True  # 必须有 apikey 或 AK/SK 才能用（链跳过未配的）
-    # 图片搜索由 search --image 路由（category="image" 显式传入），参数面只留图片专属
-    params = {
-        "image": {
-            "width_min": ParamSpec(type=int, help="minimum width"),
-            "width_max": ParamSpec(type=int, help="maximum width"),
-            "height_min": ParamSpec(type=int, help="minimum height"),
-            "height_max": ParamSpec(type=int, help="maximum height"),
-            "shapes": ParamSpec(choices=("横长方形", "竖长方形", "方形"), help="image shape"),
-        },
-    }
 
     def has_credentials(self) -> bool:
         """doubao 段有 api_key（Bearer）或有 ak+sk（签名）即 True。"""
@@ -391,18 +326,16 @@ class DoubaoProvider(Provider):
     def test_credentials(self) -> str:
         """发一个最小搜索请求验证凭证，成功返回状态描述（如 "OK (0.4s)"）。"""
         t0 = time.monotonic()
-        self._request("ping", {"count": 1}, image=False, timeout=15)
+        self._request("ping", {"count": 1}, timeout=15)
         elapsed = time.monotonic() - t0
         return f"OK ({elapsed:.1f}s)"
 
     def search(self, category: str, query: str, opts: dict) -> SearchResponse:
-        """执行 doubao 搜索（category="image" 走图片搜索，否则网页搜索）。"""
+        """执行 doubao 网页搜索。"""
         query = (query or "").strip()
-        image = category == "image"
-        # full 只影响展示（formatter 截断），不映射到 API body —— 与原 CLI 一致
-        payload = self._request(query, opts, image, timeout=self.timeout())
+        payload = self._request(query, opts, timeout=self.timeout())
 
-        results = _to_results(payload, image)
+        results = _to_results(payload)
         if not results:
             raise NoResultsError("no results found")
         return SearchResponse(
@@ -410,11 +343,11 @@ class DoubaoProvider(Provider):
             metadata=_to_metadata(payload, results),
         )
 
-    def _request(self, query: str, opts: dict, image: bool, timeout: float) -> dict:
+    def _request(self, query: str, opts: dict, timeout: float) -> dict:
         """凭据解析 + body 构造 + 发送请求（apikey 或 aksk），返回原始 payload。"""
         d = self.cfg
         method, key1, key2 = _resolve_creds(d)
-        body = _build_body(query, opts, d, image)
+        body = _build_body(query, opts, d)
         if method == "apikey":
             headers = {"Authorization": f"Bearer {key1}"}
             return _do_request(APIKEY_URL, headers, body, timeout)

@@ -44,8 +44,7 @@ class TavilyProvider(Provider):
         "api_key": {"secret": True, "hint": "Tavily API key (falls back to keyless free mode when unset)"},
         "timeout": {"default": 30, "hint": "tavily request timeout in seconds"},
     }
-    priority = {"page": 40}
-    # web 不声明 priority → 不进默认搜索链（--use tavily 显式指定）
+    priority = {"web": 10, "page": 20}
 
     def _post_json(self, url: str, body: dict, timeout: int) -> dict:
         """POST JSON 到 Tavily，认证自动切换 keyless / api_key。"""

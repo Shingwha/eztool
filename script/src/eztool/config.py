@@ -107,19 +107,28 @@ def deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
-def load_config() -> dict:
-    """默认值 + 配置文件（损坏则静默回退默认）。"""
-    cfg = deep_merge(DEFAULTS, {})
+def load_overrides() -> dict:
+    """用户显式设置的覆盖值 = 配置文件原始内容（稀疏；损坏/缺失返回空 dict）。
+
+    ``config set/reset`` 在这份稀疏数据上增删并整体写回——文件里永远只有
+    用户真正设置过的键，其余一律回落 ``DEFAULTS``。
+    """
     path = config_path()
-    if os.path.isfile(path):
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                cfg = deep_merge(cfg, data)
-        except (OSError, ValueError):
-            pass  # 损坏回退默认
-    return cfg
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass  # 损坏视同未配置（load_config 同样静默回退默认）
+    return {}
+
+
+def load_config() -> dict:
+    """默认值 + 配置文件覆盖（损坏则静默回退默认）。"""
+    return deep_merge(DEFAULTS, load_overrides())
 
 
 def save_config(cfg: dict) -> None:

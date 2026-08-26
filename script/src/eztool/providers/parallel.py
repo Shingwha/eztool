@@ -36,11 +36,12 @@ DEFAULT_MAX_RESULTS = 20
 class ParallelProvider(Provider):
     name = "parallel"
     categories = frozenset({"web", "page"})
-    # 必须配 key；不声明 priority → 不进默认链（--use parallel 或配置链使用）
+    # 必须配 key；web/page 默认链末位（深层回退）
     config = {
         "api_key": {"secret": True, "hint": "Parallel API key (https://platform.parallel.ai)"},
         "timeout": {"default": 30, "hint": "parallel request timeout in seconds"},
     }
+    priority = {"web": 50, "page": 60}
     auth_required = True
 
     def _post(self, url: str, body: dict, timeout: int) -> dict:

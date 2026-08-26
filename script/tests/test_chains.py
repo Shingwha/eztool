@@ -62,11 +62,18 @@ class TestSearchChain:
             api.search(base_cfg(), "web", "q", {"use": "ch_lock"})
 
     def test_unknown_provider_is_usage_error(self, base_cfg):
+        # --use 点名未知 provider = 用法错误（硬停）
         with pytest.raises(UsageError):
             api.search(base_cfg(), "web", "q", {"use": "nope"})
-        # 配置链里出现未知名同样是 UsageError
-        with pytest.raises(UsageError):
-            api.search(base_cfg(chains={"web": ["nope"]}), "web", "q")
+
+    def test_stale_names_in_config_chain_warn_and_filter(self, base_cfg, capsys):
+        # 配置链残留已删除的 provider 名（旧配置升级）→ 警告后剔除，不硬停
+        a = make_search_provider("ch_a", results=OK)
+        cfg = base_cfg(chains={"web": ["deepseek", "ch_a"]})
+        resp = api.search(cfg, "web", "q")
+        assert resp.metadata["backend"] == "ch_a"
+        assert len(a.calls) == 1
+        assert "unknown providers" in capsys.readouterr().err
 
 
 # ── search 并行（--use a,b / --all）──────────────────────────────────────────

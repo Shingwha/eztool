@@ -1,5 +1,7 @@
 """CLI 命令面：argparse 结构、互斥组、入口校验、main() 退出码、config show 脱敏。"""
 
+import json
+
 import pytest
 
 from eztool import cli
@@ -13,10 +15,9 @@ def parse(argv):
 
 
 class TestParserStructure:
-    def test_five_subcommands_exist(self):
+    def test_four_subcommands_exist(self):
         # 用 func 默认值验证子命令注册（--help 会触发 SystemExit，故不用它探测）
         assert parse(["search", "q"]).func is cli.cmd_search
-        assert parse(["sources"]).func is cli.cmd_sources
         assert parse(["fetch", "https://x/"]).func is cli.cmd_fetch
         assert parse(["convert", "a.txt"]).func is cli.cmd_convert
 
@@ -28,20 +29,16 @@ class TestParserStructure:
         assert parse(["config", "test"]).func is cli.cmd_config_test
         assert parse(["config", "clear"]).func is cli.cmd_config_clear
 
-    def test_search_mode_mutually_exclusive(self):
-        with pytest.raises(SystemExit):
-            parse(["search", "q", "--image", "--source", "finance.quote"])
-
     def test_search_breadth_mutually_exclusive(self):
         with pytest.raises(SystemExit):
             parse(["search", "q", "--all", "--use", "doubao"])
 
-    def test_image_params_present(self):
-        args = parse(["search", "q", "--image", "--width-min", "100",
-                      "--height-max", "200", "--shapes", "方形"])
-        assert args.image is True
-        assert args.width_min == 100 and args.height_max == 200
-        assert args.shapes == "方形"
+    def test_image_and_source_flags_gone(self):
+        # image/data 类别已删除：旧参数不再被接受
+        with pytest.raises(SystemExit):
+            parse(["search", "q", "--image"])
+        with pytest.raises(SystemExit):
+            parse(["search", "q", "--source", "finance.quote"])
 
 
 class TestEntryValidation:
@@ -106,3 +103,27 @@ class TestConfigShow:
         with pytest.raises(SystemExit) as exc:
             cli.main(["config", "set", "no.such.key", "v"])
         assert exc.value.code == 2
+
+
+class TestSparseConfigFile:
+    """config set/reset 只在覆盖值上增删：文件稀疏，不携带默认值。"""
+
+    def test_set_writes_only_that_key(self, isolated_config):
+        cli.main(["config", "set", "providers.tavily.api_key", "tvly-x"])
+        data = json.loads((isolated_config / "config.json").read_text(encoding="utf-8"))
+        assert data == {"providers": {"tavily": {"api_key": "tvly-x"}}}
+
+    def test_set_then_reset_removes_key(self, isolated_config, capsys):
+        cli.main(["config", "set", "chains.web", "doubao"])
+        cli.main(["config", "reset", "chains.web"])
+        capsys.readouterr()
+        data = json.loads((isolated_config / "config.json").read_text(encoding="utf-8"))
+        assert data == {}  # 空段也被清掉
+        cli.main(["config", "show"])
+        assert "chains.web = " in capsys.readouterr().out  # 合并视图仍有默认链
+
+    def test_reset_absent_key_is_noop(self, isolated_config, capsys):
+        cli.main(["config", "reset", "settings.timeout"])
+        out = capsys.readouterr().out
+        assert "reset settings.timeout = 30" in out
+        assert not (isolated_config / "config.json").exists()  # 无文件也写出空覆盖

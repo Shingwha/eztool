@@ -19,7 +19,6 @@ from eztool.util import (
     CATEGORY_INVALID,
     CredentialsError,
     ServiceError,
-    UsageError,
 )
 
 from conftest import json_response, make_http_error, make_response
@@ -157,7 +156,8 @@ class TestAnydocConvertFile:
     def test_missing_library_is_skippable(self, tmp_path, monkeypatch):
         f = tmp_path / "a.pdf"
         f.write_bytes(b"%PDF fake")
-        monkeypatch.delitem(sys.modules, "anydoc", raising=False)
+        # sys.modules 里塞 None → import anydoc 直接抛 ImportError（库装没装都成立）
+        monkeypatch.setitem(sys.modules, "anydoc", None)
         with pytest.raises(ServiceError) as e:
             self.p.convert_file(str(f))
         assert e.value.category == CATEGORY_INVALID
@@ -352,6 +352,27 @@ class TestMineruDownloadRegression:
         assert MinerUProvider()._download_zip_markdown("https://cdn/r.zip", 60) == "# ok"
 
 
+class TestMineruCredentials:
+    def test_anonymous_reports_nothing_to_verify(self):
+        out = MinerUProvider(_popts(mineru={})).test_credentials()
+        assert "anonymous" in out
+
+    def test_v4_token_rejected_401(self, monkeypatch):
+        def raise_401(*a, **kw):
+            raise ServiceError("HTTP 401", CATEGORY_HTTP, http_code=401)
+        monkeypatch.setattr(mineru_mod, "http_get", raise_401)
+        with pytest.raises(CredentialsError):
+            MinerUProvider(_popts(mineru={"api_key": "bad"})).test_credentials()
+
+    def test_v4_token_accepted_on_probe_miss(self, monkeypatch):
+        # 探测 batch 不存在（4xx 但非 401）→ 鉴权通过
+        def raise_404(*a, **kw):
+            raise ServiceError("HTTP 404", CATEGORY_HTTP, http_code=404)
+        monkeypatch.setattr(mineru_mod, "http_get", raise_404)
+        out = MinerUProvider(_popts(mineru={"api_key": "good"})).test_credentials()
+        assert "token accepted" in out
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # doubao
 # ════════════════════════════════════════════════════════════════════════════
@@ -375,39 +396,28 @@ class TestDoubaoPickAuth:
 
 
 class TestDoubaoSearch:
-    def _run(self, category, monkeypatch, result_key, item):
+    def _run(self, monkeypatch, item):
         captured = {}
 
         def fake_post_json(url, headers, payload, timeout):
             captured.update(url=url, headers=headers, payload=payload)
-            body = {"Result": {result_key: [item], "SearchTime": 123},
+            body = {"Result": {"WebResults": [item], "SearchTime": 123},
                     "ResponseMetadata": {"RequestId": "r1"}}
             return 200, {}, json.dumps(body).encode("utf-8")
 
         monkeypatch.setattr(doubao_mod, "post_json", fake_post_json)
         svc = DoubaoProvider(_popts(doubao={"api_key": "k"}))
-        resp = svc.search(category, "q", {})
+        resp = svc.search("web", "q", {})
         return resp, captured
 
-    def test_image_mode_triggered_by_category(self, monkeypatch):
-        resp, cap = self._run("image", monkeypatch, "ImageResults", {
-            "Title": "pic", "Url": "https://page/",
-            "Image": {"Url": "https://img/x.png", "Width": 100, "Height": 200},
-            "RankScore": 0.9,
-        })
-        assert cap["payload"]["SearchType"] == "image"  # category=="image" 触发图片模式
-        assert cap["headers"]["Authorization"] == "Bearer k"
-        r = resp.results[0]
-        assert r.url == "https://img/x.png"  # 直链取 Image.Url
-        assert r.extra == {"width": 100, "height": 200, "score": 0.9}
-        assert resp.metadata["request_id"] == "r1"
-
     def test_web_mode(self, monkeypatch):
-        resp, cap = self._run("web", monkeypatch, "WebResults", {
+        resp, cap = self._run(monkeypatch, {
             "Title": "t", "Url": "https://a/", "Summary": "snip",
         })
         assert cap["payload"]["SearchType"] == "web"
+        assert cap["headers"]["Authorization"] == "Bearer k"
         assert resp.results[0].snippet == "snip"
+        assert resp.metadata["request_id"] == "r1"
 
     def test_missing_credentials_raises(self):
         svc = DoubaoProvider(_popts(doubao={}))
@@ -423,20 +433,10 @@ from eztool.providers.anysearch import AnySearchProvider
 
 
 class TestAnySearch:
-    svc = AnySearchProvider(_popts(anysearch={}))
-
-    def test_data_category_requires_source(self):
-        with pytest.raises(ServiceError) as exc:
-            self.svc.search("data", "q", {})
-        assert exc.value.category == CATEGORY_INVALID
-
-    def test_invalid_params_json_is_usage_error(self):
-        with pytest.raises(UsageError):
-            self.svc.search("web", "q", {"params": "{not json"})
-
-    def test_non_object_params_is_usage_error(self):
-        with pytest.raises(UsageError):
-            self.svc.search("web", "q", {"params": "[1, 2]"})
+    def test_web_categories_and_no_default_chain_priority_for_page(self):
+        # web 搜索 + page 提取（--use 显式用）；不再声明 data 类别与 page priority
+        assert AnySearchProvider.categories == frozenset({"web", "page"})
+        assert AnySearchProvider.priority == {"web": 30}
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -1,13 +1,13 @@
 """Provider 基类 + 注册表 + 元数据聚合。
 
 每个 provider 文件 = 一个模块，内含：实现类 + 元数据声明（config 配置键 /
-params CLI 参数面 / priority 默认链排序 / auth_required 凭证要求 / sources
-数据源标签）。注册点收敛在 ``providers/__init__.py`` 的显式 import 列表——
-没 import 的模块不注册，新增 provider = 写一个文件 + 加一行 import，其余
-（config 键、CLI 参数、默认链、config show、sources 清单）全部自动出现。
+params CLI 参数面 / priority 默认链排序 / auth_required 凭证要求）。注册点
+收敛在 ``providers/__init__.py`` 的显式 import 列表——没 import 的模块不注
+册，新增 provider = 写一个文件 + 加一行 import，其余（config 键、CLI 参数、
+默认链、config show）全部自动出现。
 
-类别（category）是五个短名：``web`` / ``image`` / ``data``（search 域）+
-``page`` / ``file``（convert 域），与配置 ``chains.<类别>`` 键同名。
+类别（category）是三个短名：``web``（search 域）+ ``page`` / ``file``
+（convert 域），与配置 ``chains.<类别>`` 键同名。
 """
 
 from __future__ import annotations
@@ -37,12 +37,12 @@ __all__ = [
     "USER_AGENT", "build_multipart", "ensure_ascii", "http_get", "post_json",
     "FetchResult", "ProviderOpts", "SearchResult", "SearchResponse",
     "ParamSpec", "Provider", "register", "SERVICES", "providers_for",
-    "category_params", "default_chain", "provider_config_map", "all_sources",
+    "category_params", "default_chain", "provider_config_map",
     "SEARCH_CATEGORIES", "CONVERT_CATEGORIES",
 ]
 
 # 类别全集：search 域 + convert 域（与 chains.* 配置键同名）
-SEARCH_CATEGORIES = ("web", "image", "data")
+SEARCH_CATEGORIES = ("web",)
 CONVERT_CATEGORIES = ("page", "file")
 
 
@@ -81,7 +81,7 @@ class SearchResult:
     url: str
     snippet: str = ""
     content: str | None = None  # 正文（anysearch 常带；doubao 需 need_content）
-    extra: dict | None = None   # 后端特有元数据（如 deepseek 的 page_age）
+    extra: dict | None = None   # 后端特有元数据（如 keen 的 published_at）
     source: str | None = None   # 命中的 provider 名（并行合并时回填）
 
 
@@ -91,7 +91,7 @@ class SearchResponse:
 
     query: str
     results: list[SearchResult] = field(default_factory=list)
-    answer: str | None = None   # AI 合成回答（deepseek 自带 / --summarize 生成）
+    answer: str | None = None   # AI 合成回答（--summarize 生成）
     metadata: dict | None = None  # backend / total_results / search_time_ms / request_id
     citations: list | None = None  # --summarize 的确定性引用表（summarize.Citation）
 
@@ -113,16 +113,14 @@ class ParamSpec:
 class Provider:
     """服务商基类。子类声明元数据 + 实现对应能力方法。
 
-    - ``categories``：支持哪些类别（web/image/data/page/file），回退链据此过滤。
+    - ``categories``：支持哪些类别（web/page/file），回退链据此过滤。
     - ``params``：``{类别: {参数名: ParamSpec}}``，CLI 参数面自动并入。
     - ``config``：``{配置键: {default, secret, hint}}``（相对 providers.<name>
       段），自动生成 DEFAULTS / SECRET_KEYS / KEY_HINTS——加配置键只改这里。
     - ``priority``：``{类别: 排序值}``，默认回退链按此排序（小在前）。不声明
-      的类别 = 不进默认链（如 exa），用户可 --use 显式指定或配置链。
+      的类别 = 不进默认链，用户可 --use 显式指定或配置链。
     - ``auth_required``：True = 必须有凭证才能用（默认链会跳过未配凭证的）；
       False = 匿名可用（限流），永远进链。
-    - ``sources``：数据源标签 ``[(tag, 描述)]``（如 anysearch），
-      ``eztool sources`` 由注册表聚合输出。
     """
 
     name: str = ""
@@ -131,7 +129,6 @@ class Provider:
     config: dict[str, dict[str, Any]] = {}
     priority: dict[str, int] = {}
     auth_required: bool = False
-    sources: list[tuple[str, str]] = []
     base_url: str = ""
 
     def __init__(self, opts: ProviderOpts | None = None) -> None:
@@ -142,7 +139,7 @@ class Provider:
     # -- search 能力（默认不支持）-------------------------------------------
 
     def search(self, category: str, query: str, opts: dict) -> SearchResponse:
-        """执行搜索。``category`` 为 web/image/data（图片模式等据此切换）。"""
+        """执行搜索。``category`` 为 web。"""
         raise ServiceError(f"{self.name} does not support search", CATEGORY_INVALID)
 
     def has_credentials(self) -> bool:
@@ -261,7 +258,7 @@ def default_chain(category: str) -> list[str]:
     for name in providers_for(category):
         prio = (SERVICES[name].priority or {}).get(category)
         if prio is None:
-            continue  # 不进默认链（如 exa），可 --use 显式指定
+            continue  # 不进默认链，可 --use 显式指定
         ranked.append((prio, name))
     return [name for _, name in sorted(ranked)]
 
@@ -281,12 +278,4 @@ def provider_config_map() -> dict[str, dict[str, dict[str, Any]]]:
             entry.setdefault("secret", False)
             entry.setdefault("hint", "")
             out[name][key] = entry
-    return out
-
-
-def all_sources() -> list[tuple[str, str]]:
-    """全部 provider 声明的数据源标签聚合（``eztool sources`` 输出）。"""
-    out: list[tuple[str, str]] = []
-    for cls in SERVICES.values():
-        out.extend(cls.sources or [])
     return out

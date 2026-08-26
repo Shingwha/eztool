@@ -7,8 +7,11 @@
 
 All config lives in `~/.config/eztool/config.json` (the `EZTOOL_CONFIG_DIR`
 environment variable overrides the directory; `eztool config show` prints the
-actual path on its first line). A corrupted config file silently falls back to
-defaults — delete it with `eztool config clear` if in doubt.
+actual path on its first line). The file is **sparse** — it stores only the
+values you explicitly set with `config set`; everything else falls back to
+built-in defaults (`config show` prints the fully merged view). A corrupted
+config file silently falls back to defaults — delete it with
+`eztool config clear` if in doubt.
 
 | Command | Effect |
 |---|---|
@@ -23,17 +26,17 @@ defaults — delete it with `eztool config clear` if in doubt.
 
 ```jsonc
 {
-  "settings":  { "timeout": 30 },                        // global default timeout
-  "chains":    { "web": [...], "image": [...], "data": [...], "page": [...], "file": [...] },
+  "settings":  { "timeout": 30 },               // global default timeout
+  "chains":    { "web": [...], "page": [...], "file": [...] },
   "providers": { "<name>": { "api_key": ..., "timeout": ..., ... } },
   "summarize": { "base_url": ..., "api_key": ..., "model": ..., ... }
 }
 ```
 
 - **settings**: global defaults (currently just `timeout`).
-- **chains**: the five fallback chains, one per category (`web`/`image`/`data`
-  for search, `page` for fetch, `file` for convert). Values are comma-separated
-  provider names tried in order, first success wins.
+- **chains**: the three fallback chains, one per category (`web` for search,
+  `page` for fetch, `file` for convert). Values are comma-separated provider
+  names tried in order, first success wins.
 - **providers**: per-provider credentials and private settings. Everything
   `config show` lists is a valid key — unknown keys are rejected.
 - **summarize**: the LLM endpoint behind `--summarize` (any OpenAI-compatible
@@ -43,8 +46,7 @@ defaults — delete it with `eztool config clear` if in doubt.
 **Timeout precedence**: `--timeout` (CLI flag) > `providers.<name>.timeout` >
 `settings.timeout`.
 
-The only environment override besides `EZTOOL_CONFIG_DIR`:
-`DEEPSEEK_WS_BASE_URL` (DeepSeek API base URL).
+The only environment override is `EZTOOL_CONFIG_DIR`.
 
 ## Credentials: who needs what
 
@@ -54,9 +56,7 @@ unconfigured; naming one explicitly with `--use` errors instead (exit 2).
 | Provider | How to get the key |
 |---|---|
 | `doubao` (required) | Set `providers.doubao.api_key` (Doubao WebSearch API key), or `providers.doubao.ak` + `providers.doubao.sk` (Volcengine AccessKey/SecretKey) — either one. |
-| `deepseek` (required) | API key from https://platform.deepseek.com → `providers.deepseek.api_key`. |
-| `exa` (required) | API key from https://dashboard.exa.ai → `providers.exa.api_key`. Not in any default chain; use `--use exa` or add it to `chains.web`/`chains.page`. |
-| `parallel` (required) | API key from https://platform.parallel.ai → `providers.parallel.api_key`. Not in any default chain; use `--use parallel` or add it to `chains.web`/`chains.page`. |
+| `parallel` (required) | API key from https://platform.parallel.ai → `providers.parallel.api_key`. |
 
 These work **anonymously** (rate-limited) — no key needed; setting one raises
 quota:
@@ -81,33 +81,25 @@ eztool config test                            # verify everything you configured
 | Key | Default | Notes |
 |---|---|---|
 | `settings.timeout` | 30 | Global default timeout in seconds |
-| `chains.web` | `doubao,anysearch,deepseek,keen` | Web search fallback chain |
-| `chains.image` | `doubao` | Image search fallback chain |
-| `chains.data` | `anysearch` | Data source fallback chain |
-| `chains.page` | `markdown_new,jina_reader,anysearch,tavily,firecrawl,keen` | URL fetch fallback chain |
+| `chains.web` | `tavily,doubao,anysearch,keen,parallel` | Web search fallback chain |
+| `chains.page` | `markdown_new,tavily,jina_reader,firecrawl,keen,parallel` | URL fetch fallback chain |
 | `chains.file` | `anydoc,markdown_new,mineru` | Local file parsing fallback chain |
 | `providers.doubao.api_key` / `ak` / `sk` | — (secret) | Doubao credentials: api_key (Bearer) or Volcengine AK+SK |
 | `providers.doubao.auth` | auto | Auth method: `apikey` / `aksk` (empty = auto-detect) |
 | `providers.doubao.count_web` | 20 | Web result count (1–50) |
-| `providers.doubao.count_image` | 5 | Image result count (1–5) |
 | `providers.doubao.need_url` / `need_content` | false | Only return results with landing URLs / with full content |
 | `providers.doubao.content_formats` | — | Content format: `text` / `markdown` |
 | `providers.doubao.time_range` | — | `OneDay/OneWeek/OneMonth/OneYear` or `YYYY-MM-DD..YYYY-MM-DD` |
 | `providers.doubao.industry` | — | Industry search: `finance` / `game` / `gov` |
 | `providers.anysearch.api_key` | — (secret) | Optional; raises quota |
 | `providers.anysearch.max_results` | 20 | Number of results (1–20) |
-| `providers.deepseek.api_key` | — (secret) | Required |
-| `providers.deepseek.model` | deepseek-v4-flash | `deepseek-v4-flash` / `deepseek-v4-pro` |
-| `providers.deepseek.thinking` | enabled | `enabled` / `disabled` (enabled: more accurate, slower, costlier) |
-| `providers.deepseek.max_tokens` | 32768 | Max output tokens |
 | `providers.tavily.api_key` | — (secret) | Optional; unset = keyless free mode |
 | `providers.keen.api_key` | — (secret) | Optional; unset = keyless public pool |
 | `providers.parallel.api_key` | — (secret) | Required |
-| `providers.exa.api_key` | — (secret) | Required |
 | `providers.jina_reader.api_key` | — (secret) | Optional; raises quota |
 | `providers.firecrawl.api_key` | — (secret) | Optional; raises quota |
 | `providers.mineru.api_key` | — (secret) | Optional; set = v4 Precision API, unset = v1 lightweight API |
-| `providers.<name>.timeout` | varies | Per-provider timeout: tavily/exa/markdown_new 30, jina_reader 10, firecrawl/anydoc 60, mineru 300, everything else 30 |
+| `providers.<name>.timeout` | varies | Per-provider timeout: tavily/keen/parallel/markdown_new 30, jina_reader 10, firecrawl/anydoc 60, mineru 300, everything else 30 |
 | `summarize.backend` | `openai` | Summarizer registry selector (`openai` = any OpenAI-compatible chat/completions endpoint) |
 | `summarize.base_url` | — | **Required** for `--summarize`, e.g. `https://api.deepseek.com` |
 | `summarize.api_key` | — (secret) | **Required** for `--summarize` |
@@ -134,7 +126,7 @@ eztool convert report.pdf --summarize
 ```
 
 Notes: `fetch` accepts multiple URLs (fetched in parallel, one synthesis across
-all of them); `--image --summarize` is rejected (no text content).
+all of them).
 
 **Always pass `--query` with fetch/convert `--summarize`.** The synthesis is
 only as good as the request it steers by: without `--query` the LLM gets a
@@ -148,7 +140,7 @@ query already serves as the request.)
 
 ```bash
 eztool config show                              # current chains
-eztool config set chains.web "deepseek,doubao"  # comma-separated, tried in order
+eztool config set chains.web "doubao,tavily"    # comma-separated, tried in order
 eztool config reset chains.web                  # back to the derived default
 ```
 
@@ -157,10 +149,13 @@ Rules of thumb:
 - Order matters: first success wins. Cheaper/faster providers go first.
 - Providers needing credentials you haven't set are skipped silently in chains
   (but error when named via `--use`).
-- Some providers are deliberately **not** in the defaults: `exa` / `parallel`
-  (paid, key required), `tavily` for web search, `mineru` for URL fetch. Add
-  them to a chain or name them with `--use`.
-- One-off overrides don't need config changes: `eztool search "q" --use exa`,
+- Providers without a `priority` for a category are **not** in the defaults:
+  `anysearch` for URL fetch (HTML-only, 50k-char truncation) and `mineru` for
+  URL fetch (heavy async OCR). Add them to a chain or name them with `--use`.
+- Stale provider names in configured chains (e.g. left over from an older
+  eztool version) are warned about on stderr and dropped — they never break
+  the run.
+- One-off overrides don't need config changes: `eztool search "q" --use keen`,
   `eztool fetch <url> --use jina_reader,firecrawl`.
 
 ## Reading errors and exit codes
@@ -183,8 +178,8 @@ While a chain runs, stderr shows its progress — use it to see which backend
 actually served and why others didn't:
 
 ```
-[doubao] failed: HTTP 401 (0.4s) -> next provider
-[anysearch] OK (1.2s, 20 results)
+[tavily] failed: HTTP 429 (0.4s) -> next provider
+[doubao] OK (1.2s, 20 results)
 ```
 
 ## Troubleshooting
@@ -195,9 +190,10 @@ You named X with `--use` but haven't configured its key. Run
 then verify with `eztool config test --providers X`. Never paste keys into
 commands or files outside the config.
 
-**`--image` search says all providers failed**
-The image chain is doubao-only and doubao needs credentials. Configure them
-(see above) — without them there is no image search.
+**"warning: chains.web contains unknown providers"**
+Your config file's chain references a provider that no longer exists (removed
+in an eztool upgrade). It is skipped automatically; clean it up with
+`eztool config reset chains.<category>` or edit the chain.
 
 **"content looks suspicious … it may be incomplete"**
 Every provider hit what looks like a bot-check/interstitial page, and the least
@@ -208,7 +204,8 @@ the chain falls through automatically.
 
 **`fetch` returns a login/verification wall for one site**
 Try a different rendering path: `--use firecrawl` (browser rendering) or
-`--use mineru` for document URLs. If the site hard-blocks datacenter IPs, no
+`--use mineru` for document URLs. `--use anysearch` (MCP extract) is another
+option for plain HTML pages. If the site hard-blocks datacenter IPs, no
 provider will get through.
 
 **Timeouts / a provider hangs**

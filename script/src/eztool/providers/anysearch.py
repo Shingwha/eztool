@@ -1,11 +1,11 @@
 """AnySearch 后端（搜索 + URL 提取）。
 
 - 搜索：AnySearch REST API（POST /v1/search），支持匿名（无 API Key）与
-  Bearer Token 鉴权，支持 ``--source`` 数据源标签定向（data 类别）。
+  Bearer Token 鉴权。
 - URL 提取（page 类别）：MCP JSON-RPC 通道（POST /mcp 的 tools/call，
   ``extract`` 工具），匿名可用；限制：仅 HTML（PDF/二进制报错）、内容
-  50,000 字符截断、服务端 30s 超时——故放在 page 链中间位，firecrawl
-  兜底全文。
+  50,000 字符截断、服务端 30s 超时——故不进默认 page 链，``--use anysearch``
+  显式指定时使用。
 
 纯标准库实现。
 """
@@ -30,7 +30,6 @@ from ..util import (
     CATEGORY_INVALID,
     NoResultsError,
     ServiceError,
-    UsageError,
 )
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
@@ -63,10 +62,6 @@ def _call_api(
     *,
     api_key: str | None = None,
     max_results: int = DEFAULT_MAX_RESULTS,
-    tag: str | None = None,
-    zone: str | None = None,
-    language: str | None = None,
-    params: dict[str, Any] | None = None,
     base_url: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
@@ -84,14 +79,6 @@ def _call_api(
         "query": query.strip(),
         "max_results": max_results,
     }
-    if tag:
-        body["tag"] = tag
-    if zone:
-        body["zone"] = zone
-    if language:
-        body["language"] = language
-    if params:
-        body["params"] = params
 
     headers: dict[str, str] = {}
     if api_key:
@@ -165,76 +152,16 @@ def _mcp_call(
 
 @register
 class AnySearchProvider(Provider):
-    """anysearch 后端：搜索（匿名可用；--source 定向数据源）+ URL 提取（MCP extract）。"""
+    """anysearch 后端：web 搜索（匿名可用）+ URL 提取（MCP extract，--use 显式指定）。"""
 
     name = "anysearch"
-    categories = frozenset({"web", "data", "page"})
+    categories = frozenset({"web", "page"})
     # 匿名可用（限流）；配了 key 走正式额度
     config = {
         "api_key": {"secret": True, "hint": "AnySearch API key (optional; works anonymously)"},
         "max_results": {"default": 20, "hint": "number of results (1-20)"},
     }
-    priority = {"web": 20, "data": 10, "page": 30}
-    # 数据源标签（来自官方文档，保留原顺序），``eztool sources`` 聚合输出
-    sources: list[tuple[str, str]] = [
-        # General
-        ("general.general", "General web search"),
-        # Academic
-        ("academic.search", "Cross-disciplinary paper search (keywords/title/author/institution)"),
-        ("academic.biomedical", "Biomedical literature search (MEDLINE/MeSH/PMC full text)"),
-        ("academic.citation", "Citation graph and citation count search"),
-        ("academic.dataset", "Research datasets and open-source code (Zenodo/Dryad/Figshare)"),
-        ("academic.preprint", "Preprint search (CS/physics/math/biology/economics)"),
-        # Agriculture
-        ("agriculture.fao", "FAO global agriculture stats (yield/trade/food prices)"),
-        # Business
-        ("business.company", "Company registration/shareholders/executives/business status"),
-        ("business.jobs", "Global job search (by skill/location/salary)"),
-        ("business.people", "Business contact search (title/company/location)"),
-        ("business.trade", "International trade stats (HS code/country/time)"),
-        # Code
-        ("code.doc", "Developer docs and code examples (npm/PyPI/Cargo)"),
-        ("code.snippet", "GitHub public repo code search (regex/language filter)"),
-        # Energy
-        ("energy.electricity", "Electricity market data (price/generation/demand/carbon intensity)"),
-        ("energy.production", "Energy production and consumption stats (oil/gas/coal/nuclear/renewable)"),
-        # Environment
-        ("environment.aqi", "Global real-time air quality index (AQI/PM2.5/PM10)"),
-        # Film
-        ("film.torrent", "Movie/music BT resource search (magnet link/size/seeders)"),
-        # Finance
-        ("finance.quote", "Real-time and historical quotes (stocks/forex/crypto/commodities/indices)"),
-        ("finance.news", "Global financial news and company announcements"),
-        ("finance.fundamental", "Financial statements/valuation/analyst ratings/SEC filings"),
-        ("finance.calendar", "Earnings/economic data/IPO calendar"),
-        ("finance.macro", "Macroeconomic indicators (GDP/CPI/PMI/interest rates/money supply)"),
-        ("finance.screen", "Stock screener (market cap/PE/dividend yield/sector/country)"),
-        # Gaming
-        ("gaming.esports", "Esports player stats/rankings/hero attributes (LoL etc.)"),
-        ("gaming.store", "Steam real-time prices/discounts/ratings/concurrent players"),
-        # Health
-        ("health.drug", "Drug labels/adverse reactions/interactions/recalls"),
-        ("health.stats", "Global public health stats (194 countries: mortality/morbidity/life expectancy)"),
-        ("health.trial", "Clinical trial registry search (condition/drug/phase/region)"),
-        # IP
-        ("ip.global", "Global patent search and family tracking (EPO DOCDB/INPADOC)"),
-        # Legal
-        ("legal.case", "Court rulings and legal opinions (CN/US/CA/ECHR)"),
-        ("legal.legislation", "Legislative tracking (US Congress bills/votes/deliberations)"),
-        ("legal.statute", "Statute and regulation search (with section anchors and version history)"),
-        # Resources
-        ("resource.image", "Professional photography/stock/SVG/illustrations/vectors"),
-        # Security
-        ("security.intel", "Threat intelligence (IP/domain/URL/file hash/IOC)"),
-        ("security.noise", "IPv4 background scan noise detection"),
-        ("security.scan", "File hash/URL/IP/domain multi-vendor scan aggregation"),
-        ("security.vuln", "CVE details (CVSS score/affected versions/patch links)"),
-        # Social media
-        ("social_media.social_media", "Social media information search and retrieval"),
-        # Travel
-        ("travel.flight", "Global flight search (origin/destination/date/cabin/luggage/compare)"),
-        ("travel.flight_status", "Real-time flight status (departure/arrival/gate/delay)"),
-    ]
+    priority = {"web": 30}  # page 不声明 priority → 不进默认链（限制多，--use 用）
 
     def has_credentials(self) -> bool:
         """anysearch 段显式配置了 api_key（None 算未配置；无 key 仍可匿名搜索）。"""
@@ -253,22 +180,12 @@ class AnySearchProvider(Provider):
         return f"OK ({elapsed:.1f}s)"
 
     def search(self, category: str, query: str, opts: dict) -> SearchResponse:
-        """执行 AnySearch 搜索（category 为 web / data）。
+        """执行 AnySearch 网页搜索。
 
         opts 可选键（缺失用 .get 兜底）：
-            count(int)     结果数，覆盖 providers.anysearch.max_results
-                           （默认 20，API 上限 20，超限 clamp）
-            source(str)    数据源标签（data 类别必填，见 eztool sources）
-            zone(str)      区域（"cn"/"intl"）
-            language(str)  语言（如 "zh-CN"/"en"）
-            params(str)    额外参数 JSON 字符串（如 {"ticker": "AAPL"}）
-            anonymous(bool) True 强制匿名（忽略配置的 api_key）
+            count(int)  结果数，覆盖 providers.anysearch.max_results
+                        （默认 20，API 上限 20，超限 clamp）
         """
-        if opts.get("anonymous"):
-            api_key = None
-        else:
-            api_key = self.api_key
-
         count = opts.get("count")
         if count is None:
             count = self.cfg.get("max_results", DEFAULT_MAX_RESULTS)
@@ -278,36 +195,10 @@ class AnySearchProvider(Provider):
             count = DEFAULT_MAX_RESULTS
         count = max(1, min(count, API_MAX_RESULTS))
 
-        tag = opts.get("source")
-        if category == "data" and not tag:
-            raise ServiceError(
-                "data category search requires --source with a data source tag "
-                "(see eztool sources)",
-                CATEGORY_INVALID, code="invalid_request",
-            )
-        zone = opts.get("zone")
-        language = opts.get("language")
-
-        params: dict[str, Any] | None = None
-        raw_params = opts.get("params")
-        if raw_params is not None:
-            try:
-                params = json.loads(raw_params)
-            except (json.JSONDecodeError, TypeError) as e:
-                raise UsageError(
-                    f"--params must be a JSON object string: {e}"
-                ) from None
-            if not isinstance(params, dict):
-                raise UsageError("--params must be a JSON object (e.g. {\"ticker\": \"AAPL\"})")
-
         data = _call_api(
             query,
-            api_key=api_key,
+            api_key=self.api_key,
             max_results=count,
-            tag=tag,
-            zone=zone,
-            language=language,
-            params=params,
             timeout=self.timeout(DEFAULT_TIMEOUT),
         )
 
@@ -342,7 +233,7 @@ class AnySearchProvider(Provider):
         """URL → Markdown（AnySearch MCP ``extract`` 工具）。
 
         限制：仅 HTML 页面（PDF/二进制报错）；内容 50,000 字符截断；服务端
-        30s 超时。故只作 page 链的中间位，firecrawl 兜底全文。
+        30s 超时。故不进默认 page 链，``--use anysearch`` 显式指定时使用。
         """
         t0 = time.monotonic()
         result = _mcp_call("extract", {"url": url}, self.api_key, timeout)

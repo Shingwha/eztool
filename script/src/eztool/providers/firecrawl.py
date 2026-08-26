@@ -28,7 +28,7 @@ class FirecrawlProvider(Provider):
         "api_key": {"secret": True, "hint": "Firecrawl API key (optional; keyless access is rate-limited)"},
         "timeout": {"default": 60, "hint": "firecrawl timeout in seconds"},
     }
-    priority = {"page": 50}
+    priority = {"page": 40}
 
     def build_headers(self) -> dict:
         headers = {}

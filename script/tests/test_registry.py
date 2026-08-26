@@ -1,5 +1,5 @@
 """注册表与元数据聚合：register / providers_for / default_chain / category_params /
-provider_config_map / all_sources。"""
+provider_config_map。"""
 
 import pytest
 
@@ -47,12 +47,16 @@ class TestDefaultChain:
         assert fakes == ["fake_high", "fake_low"]
         assert "fake_out" not in chain
 
-    def test_real_chains_cover_five_categories(self):
-        # 出厂默认链由 priority 声明派生；五个类别都应有定义（可为空链）
+    def test_real_chains_derived_from_priorities(self):
+        # 出厂默认链由 priority 声明派生；三个类别都应有定义
         import eztool.providers  # noqa: F401 确保真实 provider 已注册
-        for cat in ("web", "image", "data", "page", "file"):
-            assert isinstance(prov.default_chain(cat), list)
-        assert prov.default_chain("web")[0] == "doubao"  # priority=10 最前
+        assert prov.default_chain("web") == [
+            "tavily", "doubao", "anysearch", "keen", "parallel",
+        ]
+        assert prov.default_chain("page") == [
+            "markdown_new", "tavily", "jina_reader", "firecrawl", "keen", "parallel",
+        ]
+        assert prov.default_chain("file") == ["anydoc", "markdown_new", "mineru"]
 
 
 class TestCategoryParams:
@@ -82,14 +86,13 @@ class TestMetadataAggregation:
         m = prov.provider_config_map()
         assert m["doubao"]["api_key"]["secret"] is True
         assert m["doubao"]["count_web"]["default"] == 20
-        assert m["exa"]["api_key"]["secret"] is True  # auth_required 配套
+        assert m["parallel"]["api_key"]["secret"] is True  # auth_required 配套
 
     def test_auth_required_set(self):
         required = {n for n, cls in prov.SERVICES.items() if cls.auth_required}
-        assert required == {"doubao", "deepseek", "exa", "parallel"}
+        assert required == {"doubao", "parallel"}
 
-    def test_all_sources_aggregates_40_tags(self):
-        sources = prov.all_sources()
-        assert len(sources) == 40
-        tags = [t for t, _ in sources]
-        assert "finance.quote" in tags and "general.general" in tags
+    def test_no_sources_field_left(self):
+        # sources 数据源标签机制已删除：基类与注册表都不应再暴露
+        assert not hasattr(prov.Provider, "sources")
+        assert not hasattr(prov, "all_sources")

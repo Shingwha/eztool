@@ -1,11 +1,6 @@
-"""输出格式化：format_search / format_image / format_data / format_sources。"""
+"""输出格式化：format_search / format_summary。"""
 
-from eztool.format import (
-    format_data,
-    format_image,
-    format_search,
-    format_sources,
-)
+from eztool.format import format_search, format_summary
 from eztool.provider import SearchResponse, SearchResult
 
 
@@ -48,30 +43,16 @@ class TestFormatSearch:
         assert "1. NoLink" in out and "[NoLink]()" not in out
 
 
-class TestFormatImage:
-    def test_direct_link_and_dimensions(self):
-        r = SearchResult(title="pic", url="https://img/x.png",
-                         extra={"width": 100, "height": 200,
-                                "shape": "方形", "score": 0.9})
-        out = format_image(_resp([r], backend="doubao"))
-        assert "1. ![img](https://img/x.png) — 100×200 · 方形 · score=0.9 — pic" in out
-        bare = format_image(_resp([SearchResult(title="", url="https://img/y.png")],
-                                backend="doubao"))
-        assert "1. ![img](https://img/y.png)" in bare and "×" not in bare
-
-
-class TestFormatData:
-    def test_source_always_tagged(self):
-        # data 输出不做 merged 判断，有 source 就标注
-        r = SearchResult(title="AAPL", url="", snippet="quote", source="anysearch")
-        out = format_data(_resp([r], backend="anysearch"))
-        assert "1. AAPL **[anysearch]** — quote" in out
-        assert out.endswith("backend: anysearch")
-
-
-class TestFormatSources:
-    def test_lists_tags(self):
-        out = format_sources([("finance.quote", "Real-time quotes"),
-                              ("general.general", "General web search")])
-        assert "## Available data source tags" in out
-        assert "- `finance.quote` — Real-time quotes" in out
+class TestFormatSummary:
+    def test_answer_and_citations(self):
+        from eztool.summarize import Citation
+        out = format_summary(
+            "答案 [1][2]",
+            [Citation(index=1, title="A", url="https://a/", provider="tavily"),
+             Citation(index=2, title="B", url="https://b/")],
+            query="问题",
+        )
+        assert "## Summary: 问题" in out
+        assert "### Answer" in out and "答案 [1][2]" in out
+        assert "[1] [A](https://a/) **[tavily]**" in out
+        assert "[2] [B](https://b/)" in out and "**[B]**" not in out

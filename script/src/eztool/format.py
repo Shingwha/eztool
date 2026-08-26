@@ -51,56 +51,6 @@ def format_search(resp: SearchResponse) -> str:
     return "\n".join(lines)
 
 
-def format_image(resp: SearchResponse) -> str:
-    """图片结果：直链（可渲染）+ 尺寸/形状元数据。"""
-    lines: list[str] = [f"## Images: {resp.query}", ""]
-    if resp.results:
-        lines += [f"### Results ({len(resp.results)})", ""]
-        for i, r in enumerate(resp.results, 1):
-            line = f"{i}. ![img]({r.url})"
-            extra = r.extra or {}
-            dims: list[str] = []
-            if extra.get("width") or extra.get("height"):
-                dims.append(f"{extra.get('width', '?')}×{extra.get('height', '?')}")
-            if extra.get("shape"):
-                dims.append(str(extra["shape"]))
-            if extra.get("score") is not None:
-                dims.append(f"score={extra['score']}")
-            if dims:
-                line += f" — {' · '.join(dims)}"
-            if r.title:
-                line += f" — {_one_line(r.title)}"
-            lines.append(line)
-        lines.append("")
-    lines.append(_meta_footer(resp.metadata))
-    return "\n".join(lines)
-
-
-def format_data(resp: SearchResponse) -> str:
-    """专业数据源结果：带来源标注（provider 名）。"""
-    lines: list[str] = [f"## Data Results: {resp.query}", ""]
-    if resp.results:
-        lines += [f"### Results ({len(resp.results)})", ""]
-        for i, r in enumerate(resp.results, 1):
-            title = r.title or r.url or f"(no title {i})"
-            line = f"{i}. [{title}]({r.url})" if r.url else f"{i}. {title}"
-            if r.source:
-                line += f" **[{r.source}]**"
-            if r.snippet:
-                line += f" — {_one_line(r.snippet)}"
-            lines.append(line)
-        lines.append("")
-    lines.append(_meta_footer(resp.metadata))
-    return "\n".join(lines)
-
-
-def format_sources(sources: list[tuple[str, str]]) -> str:
-    lines = ["## Available data source tags", ""]
-    for name, desc in sources:
-        lines.append(f"- `{name}` — {desc}")
-    return "\n".join(lines)
-
-
 def format_summary(answer: str, citations: list, query: str | None = None) -> str:
     """--summarize 输出：AI 答案 + 确定性引用表（替代原始结果列表）。
 

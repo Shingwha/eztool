@@ -1,23 +1,16 @@
 # eztool
 
-Unified CLI: **search** (`eztool search` — web / image / 40 specialized data
-sources across 12 providers: Doubao, AnySearch, DeepSeek, Tavily, Exa, Keen,
-Parallel…) +
+Unified CLI: **search** (`eztool search` — web search across 5 providers:
+Tavily, Doubao, AnySearch, Keen, Parallel) +
 **fetch** (URL → Markdown) + **convert** (local file → Markdown) + **config**.
 One tool, one skill (`SKILL.md` is the skill; the repo is the skill).
 Zero dependencies, pure Python stdlib.
 
-Replaces four standalone CLIs: `doubao-websearch` / `anysearch` / `deepseek-ws` /
-`ezwork-fetch`.
-
 ```bash
-eztool search "Rust async 2026"           # web search (doubao→anysearch→deepseek→keen fallback chain)
-eztool search "cats" --image --width-min 800   # image search (direct links + size/shape metadata)
-eztool search "AAPL" --source finance.quote --params '{"type":"quote"}'  # data source (anysearch, 40 tags)
+eztool search "Rust async 2026"           # web search (tavily→doubao→anysearch→keen→parallel fallback chain)
 eztool search "LLM agents" --all          # whole default chain in parallel + merge/dedup
 eztool search "LLM agents" --all --summarize   # + AI synthesis with citations (needs summarize.* config)
-eztool sources                            # data source tag catalog
-eztool fetch https://example.com/article  # URL → Markdown (markdown_new→jina_reader→anysearch→tavily→firecrawl→keen)
+eztool fetch https://example.com/article  # URL → Markdown (markdown_new→tavily→jina_reader→firecrawl→keen→parallel)
 eztool fetch https://a/ https://b/ --summarize --query "pricing"  # multi-URL fetch + AI synthesis
 eztool convert report.pdf --out report.md # local file → Markdown (anydoc→markdown_new→mineru)
 eztool config test                        # verify credentials
@@ -45,8 +38,8 @@ eztool --help
 
 ```bash
 eztool config set providers.doubao.api_key    # Doubao/Volcengine WebSearch (or ak+sk)
-eztool config set providers.deepseek.api_key  # DeepSeek key (optional)
-eztool config set providers.anysearch.api_key # AnySearch key (optional, works anonymously)
+eztool config set providers.tavily.api_key    # Tavily (optional, keyless works rate-limited)
+eztool config set providers.anysearch.api_key # AnySearch (optional, works anonymously)
 eztool config test                            # verify credentials
 ```
 
@@ -63,7 +56,7 @@ registry) → `providers/` (implementations) → `api` (routing + chains) →
 script/src/eztool/
 ├── util.py       # exception taxonomy + HTTP helpers + content quality gate
 ├── provider.py   # Provider base class + metadata declarations + registry (SERVICES)
-├── providers/    # 12 provider implementations; __init__.py is the only registration point
+├── providers/    # 10 provider implementations; __init__.py is the only registration point
 ├── api.py        # category routing + chain/parallel execution + quality gate + summarize hooks
 ├── summarize.py  # --summarize: summarizer registry + OpenAI-compatible backend + prompt/citations
 ├── format.py     # output formatting (Markdown)
@@ -72,16 +65,16 @@ script/src/eztool/
 ```
 
 **Adding a provider, two steps**: ① write `providers/foo.py` (a class declaring
-`name`/`categories`/`config`/`params`/`priority`/`auth_required`/`sources` plus
+`name`/`categories`/`config`/`params`/`priority`/`auth_required` plus
 the capability methods); ② add one import line to `providers/__init__.py`.
-Config keys, CLI params, default chains, `config show`, `sources` and
-`--list-providers` all appear automatically — a new config key or param touches
+Config keys, CLI params, default chains, `config show` and `--list-providers`
+all appear automatically — a new config key or param touches
 only the provider file.
 
 ```bash
 cd script
 uv run python -m eztool.cli --help   # run without installing
-uv run --group dev pytest -q         # tests (144 cases, fully mocked, zero network)
+uv run --group dev pytest -q         # tests (138 cases, fully mocked, zero network)
 uv tool install ".[local]" --force --reinstall   # reinstall after changes
 ```
 

@@ -31,6 +31,7 @@ from ..util import (
     CATEGORY_HTTP,
     CATEGORY_INVALID,
     CATEGORY_TIMEOUT,
+    CredentialsError,
     ServiceError,
 )
 from ..util import http_get, map_http_error
@@ -70,6 +71,24 @@ class MinerUProvider(Provider):
     def _v4(self) -> bool:
         """带 token 走 v4 Precision API；不带 token 走 v1 Agent 轻量 API。"""
         return bool(self.api_key)
+
+    def test_credentials(self) -> str:
+        """v4 token 用一次已鉴权 GET 探测（无效 token → 401）；v1 匿名无可检凭证。"""
+        if not self._v4:
+            return "anonymous v1 lightweight API (no credentials to verify)"
+        t0 = time.monotonic()
+        probe = f"{BASE_URL}/api/v4/extract-results/batch/00000000-0000-0000-0000-000000000000"
+        try:
+            self._get_json(probe, min(20, self.timeout(30)))
+            state = "token valid"
+        except ServiceError as e:
+            if e.http_code == 401:
+                raise CredentialsError(
+                    "mineru token rejected (HTTP 401)", code="invalid_api_key"
+                ) from None
+            # 探测的 batch 不存在 → 4xx/业务错误，但鉴权已通过
+            state = "token accepted (probe batch not found)"
+        return f"OK (v4, {state}, {time.monotonic() - t0:.1f}s)"
 
     # -- convert_file: local file → Markdown -------------------------------
 

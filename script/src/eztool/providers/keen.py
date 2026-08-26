@@ -40,7 +40,7 @@ class KeenProvider(Provider):
         "api_key": {"secret": True, "hint": "Keenable API key (falls back to keyless public pool when unset)"},
         "timeout": {"default": 30, "hint": "keen request timeout in seconds"},
     }
-    priority = {"web": 40, "page": 60}  # 匿名兜底，排在各默认链末尾
+    priority = {"web": 40, "page": 50}  # 深层回退：可降级 keyless 公共池
 
     def _auth_headers(self) -> dict:
         if self.api_key:
