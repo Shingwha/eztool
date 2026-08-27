@@ -119,6 +119,10 @@ def post_json(target: str, headers: dict, payload, timeout: int):
 
 
 def _urlopen(req, timeout: int):
+    # 未显式指定 User-Agent 时补常量：Cloudflare 类网关会 403
+    # urllib 默认的 "Python-urllib/x.y"。键名是 capitalize 后的规范形。
+    if not req.has_header("User-agent"):
+        req.add_header("User-Agent", USER_AGENT)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.headers, resp.read()
