@@ -44,7 +44,10 @@ config file silently falls back to defaults — delete it with
   no defaults; see the `--summarize` section below.
 
 **Timeout precedence**: `--timeout` (CLI flag) > `providers.<name>.timeout` >
-`settings.timeout`.
+`settings.timeout`. One built-in nuance: when none of the three is configured
+anywhere, web searches run on a quick default of **10 s** (fetch/convert keep
+the global 30 s); setting any explicit value restores standard precedence for
+every category.
 
 The only environment override is `EZTOOL_CONFIG_DIR`.
 
@@ -99,7 +102,7 @@ eztool config test                            # verify everything you configured
 | `providers.jina_reader.api_key` | — (secret) | Optional; raises quota |
 | `providers.firecrawl.api_key` | — (secret) | Optional; raises quota |
 | `providers.mineru.api_key` | — (secret) | Optional; set = v4 Precision API, unset = v1 lightweight API |
-| `providers.<name>.timeout` | varies | Per-provider timeout: tavily/keen/parallel/markdown_new 30, jina_reader 10, firecrawl/anydoc 60, mineru 300, everything else 30 |
+| `providers.<name>.timeout` | 30 | Per-provider timeout in seconds. Heavy local-file conversions usually want a bump: `eztool config set providers.mineru.timeout 300` |
 | `summarize.backend` | `openai` | Summarizer registry selector (`openai` = any OpenAI-compatible chat/completions endpoint) |
 | `summarize.base_url` | — | **Required** for `--summarize`, e.g. `https://api.deepseek.com` |
 | `summarize.api_key` | — (secret) | **Required** for `--summarize` |
@@ -120,21 +123,17 @@ eztool config set summarize.base_url https://api.deepseek.com
 eztool config set summarize.api_key          # interactive, hidden input
 eztool config set summarize.model deepseek-v4-flash
 
-eztool search "Rust async runtimes 2026" --all --summarize
+eztool search "Rust async runtimes 2026" --max 12 --summarize
 eztool fetch https://a/ https://b/ --summarize --query "only the pricing parts"
 eztool convert report.pdf --summarize
 ```
 
-Notes: `fetch` accepts multiple URLs (fetched in parallel, one synthesis across
-all of them).
-
-**Always pass `--query` with fetch/convert `--summarize`.** The synthesis is
-only as good as the request it steers by: without `--query` the LLM gets a
-generic "summarize this" instruction and tends to produce a flat, unfocused
-abstract. A concrete question or focus (`--query "only the pricing parts"`)
-makes it filter, compare and prioritize — this is the single biggest quality
-lever for the feature. (`search --summarize` doesn't need it: your search
-query already serves as the request.)
+**Always pass `--query` with fetch/convert `--summarize`.** A concrete focus
+(`--query "only the pricing parts"`) makes the synthesis filter and compare;
+without it the LLM produces a flat, generic abstract — this one argument is
+the biggest quality lever of the feature (`search --summarize` skips it: its
+query already serves as the request). Multi-URL fetch runs in parallel and
+synthesizes across all pages in one pass.
 
 ## Changing fallback chains
 
@@ -156,6 +155,7 @@ Rules of thumb:
   eztool version) are warned about on stderr and dropped — they never break
   the run.
 - One-off overrides don't need config changes: `eztool search "q" --use keen`,
+  `eztool search "q" --max 12` (sweep the chain until ~12 distinct results),
   `eztool fetch <url> --use jina_reader,firecrawl`.
 
 ## Reading errors and exit codes
@@ -210,8 +210,11 @@ provider will get through.
 
 **Timeouts / a provider hangs**
 Raise the budget for one run with `--timeout 60`, or permanently per provider:
-`eztool config set providers.<name>.timeout 60`. `jina_reader` defaults to just
-10s and `mineru` to 300s (async polling) — adjust those first.
+`eztool config set providers.<name>.timeout 60`. Remember the search fast
+default: unconfigured web searches give up at 10 s — if a slow engine keeps
+timing out on search, raise that provider's value explicitly. Slow local-file
+conversions are separate: mineru processing big PDFs is normal and wants e.g.
+`providers.mineru.timeout 300`.
 
 **`config set` says "unknown config key"**
 The key isn't declared by any provider. Run `eztool config show` for the full

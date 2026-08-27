@@ -30,8 +30,7 @@ from ..util import NoResultsError
 API_BASE = "https://api.tavily.com"
 SEARCH_URL = f"{API_BASE}/search"
 EXTRACT_URL = f"{API_BASE}/extract"
-DEFAULT_TIMEOUT = 30
-API_MAX_RESULTS = 20  # 显式 --count 时的上限
+API_MAX_RESULTS = 20  # opts["count"] 的上限
 
 
 @register
@@ -64,7 +63,7 @@ class TavilyProvider(Provider):
     def test_credentials(self) -> str:
         t0 = time.monotonic()
         data = self._post_json(
-            SEARCH_URL, {"query": "test", "max_results": 1}, self.timeout(DEFAULT_TIMEOUT)
+            SEARCH_URL, {"query": "test", "max_results": 1}, self.timeout()
         )
         elapsed = time.monotonic() - t0
         mode = "keyless" if not self.api_key else "api_key"
@@ -72,7 +71,7 @@ class TavilyProvider(Provider):
         return f"OK ({mode}, {n} results, {elapsed:.1f}s)"
 
     def search(self, category: str, query: str, opts: dict) -> SearchResponse:
-        # 不传 max_results → 服务端默认（tavily 默认 5 条）；--count 显式覆盖
+        # 不传 max_results → 服务端默认（tavily 默认 5 条）；opts["count"] 显式覆盖
         body: dict = {
             "query": query.strip(),
             "search_depth": "basic",  # 精简：固定 basic（1 credit/次）
@@ -86,7 +85,7 @@ class TavilyProvider(Provider):
             if count is not None:
                 body["max_results"] = max(1, min(count, API_MAX_RESULTS))
 
-        data = self._post_json(SEARCH_URL, body, self.timeout(DEFAULT_TIMEOUT))
+        data = self._post_json(SEARCH_URL, body, self.timeout())
 
         results = [
             SearchResult(

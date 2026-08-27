@@ -2,10 +2,11 @@
 
 命令面：
 
-- ``eztool search "<q>"``：web 搜索；``--all`` 默认链全员并行。
+- ``eztool search "<q>"``：web 搜索；缺省回退链，第一家成功即返回。
+  ``--use a,b`` 点名多个 = 并行合并；``--max N`` = 逐家升级凑够约 N 条。
 - ``eztool fetch <url>...``：URL → Markdown（多 URL 并行）；``eztool convert <file>``：本地文件 → Markdown。
-- ``--use a,b``：search = 并行合并；fetch/convert = 顺序覆盖链；1 个 = 单跑。
-  缺省走 ``chains.*`` 配置回退链。
+- ``--use a,b``：search 多名 = 并行合并；fetch/convert = 顺序覆盖链；
+  单个 = 单跑。缺省走 ``chains.*`` 配置回退链。
 - ``--summarize``：search/fetch/convert 通用——内容再过一道 OpenAI 兼容
   LLM（``summarize.*`` 配置）做提炼，输出 AI 答案 + 确定性引用表；
   fetch/convert 可加 ``--query`` 指定关注点。
@@ -26,20 +27,6 @@ from . import config as cfgmod
 from . import provider as prov
 from .format import format_search, format_summary
 from .util import EztoolError, ServiceError, UsageError
-
-
-def _add_param(parser: argparse.ArgumentParser, pname: str, spec) -> None:
-    """按 ParamSpec 声明生成 argparse 参数。"""
-    kwargs = {"help": spec.help, "default": None}
-    if spec.action == "store_true":
-        kwargs["action"] = "store_true"
-    else:
-        kwargs["type"] = spec.type
-        if spec.choices:
-            kwargs["choices"] = spec.choices
-        if spec.metavar:
-            kwargs["metavar"] = spec.metavar
-    parser.add_argument("--" + pname.replace("_", "-"), **kwargs)
 
 
 def _add_use_timeout(p: argparse.ArgumentParser, convert_mode: bool = False) -> None:
@@ -65,27 +52,25 @@ def build_parser() -> argparse.ArgumentParser:
     # ── search：web 搜索 ──
     sp = sub.add_parser("search", help="search the web")
     sp.add_argument("query", nargs="?", help="search query (omit with --list-providers)")
-    breadth = sp.add_mutually_exclusive_group()
-    breadth.add_argument("--all", action="store_true",
-                         help="run the whole default chain in parallel + merge/dedup "
-                              "(broad search)")
-    breadth.add_argument("--use", metavar="A,B",
-                         help="pick providers: one = run it alone; multiple = parallel merge; "
-                              "omit to use the configured chains fallback")
+    sp.add_argument("--use", metavar="A,B",
+                    help="pick providers: one = run it alone; multiple = parallel merge "
+                         "(fair round-robin, URL-dedup, hard-capped); "
+                         "omit to use the configured chains fallback")
+    sp.add_argument("--max", type=int, default=None, metavar="N",
+                    help="stop widening once ~N distinct results are gathered; "
+                         "providers are tried in order until then — the last one may "
+                         "push the total slightly above N")
+    sp.add_argument("--out", metavar="PATH",
+                    help="write to this file instead of stdout")
     sp.add_argument("--summarize", action="store_true",
                     help="AI-synthesize the results into an answer with citations "
                          "(requires summarize.* config; replaces the raw result list)")
-    sp.add_argument("--count", type=int, default=None,
-                    help="results per provider (overrides each provider's default)")
     sp.add_argument("--timeout", type=int, default=None,
                     help="timeout in seconds (overrides providers.<name>.timeout "
                          "and settings.timeout)")
     sp.add_argument("--list-providers", action="store_true",
                     help="list providers available for this category and their "
                          "credential status")
-    # 类别特有参数（provider 声明自动并入）
-    for pname, spec in prov.category_params("web").items():
-        _add_param(sp, pname, spec)
     sp.set_defaults(func=cmd_search)
 
     # ── fetch：URL → Markdown（支持多 URL，并行抓取）──
@@ -157,19 +142,18 @@ def cmd_search(args: argparse.Namespace) -> None:
     cfg = cfgmod.load_config()
     if args.summarize:
         api.check_summarize(cfg)  # 缺配置 fail-fast（exit 2），不浪费搜索
-    opts: dict = {"use": args.use, "all": args.all,
-                  "count": args.count, "timeout": args.timeout,
-                  "summarize": args.summarize}
-    for pname in prov.category_params("web"):
-        v = getattr(args, pname, None)
-        if v is not None:
-            opts[pname] = v
+    # 稀疏文件里没显式设置过 settings.timeout → 允许搜索走快速缺省（api 层 10s）
+    fast_timeout = "timeout" not in (cfgmod.load_overrides().get("settings") or {})
+    opts: dict = {"use": args.use, "max": args.max,
+                  "timeout": args.timeout,
+                  "summarize": args.summarize, "fast_timeout_default": fast_timeout}
     opts = {k: v for k, v in opts.items() if v is not None}
     resp = api.search(cfg, "web", args.query, opts)
     if args.summarize and resp.answer:
-        print(format_summary(resp.answer, resp.citations or [], resp.query))
+        text = format_summary(resp.answer, resp.citations or [], resp.query)
     else:  # 未要求总结，或总结失败降级（stderr 已有 [summarize] failed 日志）
-        print(format_search(resp))
+        text = format_search(resp)
+    _emit_content(text, args.out)
 
 
 def _print_category_providers(category: str) -> None:
@@ -196,6 +180,7 @@ def _print_category_providers(category: str) -> None:
 
 
 def _emit_content(content: str, out: str | None) -> None:
+    """三命令共用的输出收口：--out 落盘时 stdout 只留一行确认。"""
     if out:
         with open(out, "w", encoding="utf-8") as f:
             f.write(content)

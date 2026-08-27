@@ -79,7 +79,7 @@ class MinerUProvider(Provider):
         t0 = time.monotonic()
         probe = f"{BASE_URL}/api/v4/extract-results/batch/00000000-0000-0000-0000-000000000000"
         try:
-            self._get_json(probe, min(20, self.timeout(30)))
+            self._get_json(probe, min(20, self.timeout()))
             state = "token valid"
         except ServiceError as e:
             if e.http_code == 401:

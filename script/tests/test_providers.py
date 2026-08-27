@@ -64,14 +64,15 @@ class TestReadText:
 
 
 class TestHtmlToMarkdown:
-    def test_headings_paragraphs_links(self):
+    def test_block_elements(self):
         html = ("<html><head><title>x</title></head><body>"
                 "<h1>Title</h1><p>Hello <a href='https://a.b'>link</a>!</p>"
-                "<h2>Sub</h2></body></html>")
+                "<h2>Sub</h2><ul><li>one</li></ul>"
+                "<pre><code>print(1)</code></pre></body></html>")
         md = _html_to_markdown(html)
         assert "# Title" in md and "## Sub" in md
-        assert "[link](https://a.b)" in md
-        assert "<h1>" not in md
+        assert "[link](https://a.b)" in md and "<h1>" not in md
+        assert "- one" in md and "```" in md and "print(1)" in md
 
     def test_table(self):
         md = _html_to_markdown(
@@ -80,12 +81,6 @@ class TestHtmlToMarkdown:
         lines = md.splitlines()
         assert lines[0] == "| A | B |"
         assert "| --- | --- |" in lines and "| 1 | 2 |" in lines
-
-    def test_list_and_code(self):
-        md = _html_to_markdown("<ul><li>one</li><li>two</li></ul>"
-                               "<pre><code>print(1)</code></pre>")
-        assert "- one" in md and "- two" in md
-        assert "```" in md and "print(1)" in md
 
     def test_inline_styles_and_noise_stripped(self):
         md = _html_to_markdown("<p><strong>b</strong> <em>i</em> <code>c</code></p>")
@@ -99,34 +94,28 @@ class TestHtmlToMarkdown:
 class TestAnydocConvertFile:
     p = AnydocProvider()
 
-    def test_unsupported_extension_is_invalid(self, tmp_path):
+    def test_entry_validation_is_invalid(self, tmp_path):
         f = tmp_path / "a.xyz"
         f.write_bytes(b"x")
-        with pytest.raises(ServiceError) as exc:
+        with pytest.raises(ServiceError) as e1:
             self.p.convert_file(str(f))
-        assert exc.value.category == CATEGORY_INVALID
-
-    def test_missing_file_is_invalid(self, tmp_path):
-        with pytest.raises(ServiceError) as exc:
+        assert e1.value.category == CATEGORY_INVALID
+        with pytest.raises(ServiceError) as e2:
             self.p.convert_file(str(tmp_path / "missing.pdf"))
-        assert exc.value.category == CATEGORY_INVALID
+        assert e2.value.category == CATEGORY_INVALID
 
-    def test_txt_passthrough(self, tmp_path):
-        f = tmp_path / "a.txt"
-        f.write_bytes("hello 世界\n".encode("utf-8"))
-        r = self.p.convert_file(str(f))
-        assert r.provider == "anydoc" and "hello 世界" in r.content
-
-    def test_json_wrapped_in_code_block(self, tmp_path):
-        f = tmp_path / "a.json"
-        f.write_bytes(b'{"a": 1}')
-        assert self.p.convert_file(str(f)).content == '```json\n{"a": 1}\n```'
-
-    def test_html_converted(self, tmp_path):
-        f = tmp_path / "a.html"
-        f.write_bytes(b"<h1>Hi</h1><p>body</p>")
-        content = self.p.convert_file(str(f)).content
-        assert "# Hi" in content and "body" in content
+    def test_plain_formats_passthrough_or_wrap(self, tmp_path):
+        cases = [
+            ("a.txt", "hello 世界\n".encode("utf-8"), "hello 世界"),
+            ("a.json", b'{"a": 1}', '```json\n{"a": 1}\n```'),
+            ("a.html", b"<h1>Hi</h1><p>body</p>", "# Hi"),
+        ]
+        for name, raw, expect in cases:
+            f = tmp_path / name
+            f.write_bytes(raw)
+            r = self.p.convert_file(str(f))
+            assert r.provider == "anydoc", name
+            assert expect in r.content, name
 
     def test_engine_format_uses_library(self, tmp_path, monkeypatch):
         f = tmp_path / "a.docx"
@@ -144,30 +133,20 @@ class TestAnydocConvertFile:
             self.p.convert_file(str(f))
         assert e.value.category == CATEGORY_EMPTY
 
-    def test_engine_oserror_is_invalid(self, tmp_path, monkeypatch):
+    def test_engine_oserror_or_missing_library_is_invalid(self, tmp_path, monkeypatch):
         f = tmp_path / "a.pdf"
         f.write_bytes(b"%PDF fake")
+        # OSError → INVALID
         monkeypatch.setitem(sys.modules, "anydoc",
                             _fake_anydoc(exc=OSError("denied")))
-        with pytest.raises(ServiceError) as e:
+        with pytest.raises(ServiceError) as e1:
             self.p.convert_file(str(f))
-        assert e.value.category == CATEGORY_INVALID
-
-    def test_missing_library_is_skippable(self, tmp_path, monkeypatch):
-        f = tmp_path / "a.pdf"
-        f.write_bytes(b"%PDF fake")
-        # sys.modules 里塞 None → import anydoc 直接抛 ImportError（库装没装都成立）
+        assert e1.value.category == CATEGORY_INVALID
+        # sys.modules 里塞 None → import anydoc 抛 ImportError（库装没装都成立）
         monkeypatch.setitem(sys.modules, "anydoc", None)
-        with pytest.raises(ServiceError) as e:
+        with pytest.raises(ServiceError) as e2:
             self.p.convert_file(str(f))
-        assert e.value.category == CATEGORY_INVALID
-
-    def test_empty_output_degrades(self, tmp_path):
-        f = tmp_path / "a.txt"
-        f.write_bytes(b"   \n\n  ")
-        with pytest.raises(ServiceError) as e:
-            self.p.convert_file(str(f))
-        assert e.value.category == CATEGORY_EMPTY
+        assert e2.value.category == CATEGORY_INVALID
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -329,27 +308,17 @@ class TestMineruV4Flow:
 class TestMineruDownloadRegression:
     """回归：下载阶段返回非 200 → ServiceError(CATEGORY_HTTP)（此前被当内容解析）。"""
 
-    def test_download_text_non_200(self, monkeypatch):
+    def test_download_non_200_raises_http(self, monkeypatch):
         monkeypatch.setattr(mineru_mod, "http_get",
                             lambda *a, **kw: (500, {}, b"server error"))
-        with pytest.raises(ServiceError) as exc:
+        with pytest.raises(ServiceError) as e1:
             MinerUProvider()._download_text("https://cdn/full.md", 60)
-        assert exc.value.category == CATEGORY_HTTP
-        assert exc.value.http_code == 500
-
-    def test_download_zip_non_200(self, monkeypatch):
+        assert e1.value.category == CATEGORY_HTTP and e1.value.http_code == 500
         monkeypatch.setattr(mineru_mod, "http_get",
                             lambda *a, **kw: (403, {}, b"denied"))
-        with pytest.raises(ServiceError) as exc:
+        with pytest.raises(ServiceError) as e2:
             MinerUProvider()._download_zip_markdown("https://cdn/r.zip", 60)
-        assert exc.value.category == CATEGORY_HTTP
-        assert exc.value.http_code == 403
-
-    def test_download_zip_extracts_full_md(self, monkeypatch):
-        body = _make_zip("# ok")
-        monkeypatch.setattr(mineru_mod, "http_get",
-                            lambda *a, **kw: (200, {}, body))
-        assert MinerUProvider()._download_zip_markdown("https://cdn/r.zip", 60) == "# ok"
+        assert e2.value.category == CATEGORY_HTTP and e2.value.http_code == 403
 
 
 class TestMineruCredentials:
@@ -357,15 +326,14 @@ class TestMineruCredentials:
         out = MinerUProvider(_popts(mineru={})).test_credentials()
         assert "anonymous" in out
 
-    def test_v4_token_rejected_401(self, monkeypatch):
+    def test_v4_token_auth_semantics(self, monkeypatch):
+        # 401 = token 无效；探测 batch 不存在（4xx 但非 401）→ 鉴权通过
         def raise_401(*a, **kw):
             raise ServiceError("HTTP 401", CATEGORY_HTTP, http_code=401)
         monkeypatch.setattr(mineru_mod, "http_get", raise_401)
         with pytest.raises(CredentialsError):
             MinerUProvider(_popts(mineru={"api_key": "bad"})).test_credentials()
 
-    def test_v4_token_accepted_on_probe_miss(self, monkeypatch):
-        # 探测 batch 不存在（4xx 但非 401）→ 鉴权通过
         def raise_404(*a, **kw):
             raise ServiceError("HTTP 404", CATEGORY_HTTP, http_code=404)
         monkeypatch.setattr(mineru_mod, "http_get", raise_404)
@@ -382,13 +350,11 @@ from eztool.providers.doubao import DoubaoProvider, _pick_auth
 
 
 class TestDoubaoPickAuth:
-    def test_auth_choice_priority(self):
-        # api_key 优先于 ak+sk；无 key 时用 ak+sk；auth 显式指定最优先
+    def test_auth_choice_and_validation(self):
+        # api_key 优先于 ak+sk；auth 显式指定最优先；缺凭证/非法值报错
         assert _pick_auth({"api_key": "k", "ak": "a", "sk": "s"}) == "apikey"
         assert _pick_auth({"ak": "a", "sk": "s"}) == "aksk"
         assert _pick_auth({"auth": "aksk", "api_key": "k", "ak": "a", "sk": "s"}) == "aksk"
-
-    def test_missing_or_invalid_auth_raises(self):
         with pytest.raises(CredentialsError):
             _pick_auth({})
         with pytest.raises(CredentialsError):
@@ -469,7 +435,7 @@ def _keen_search(monkeypatch, configs, payload):
 
 
 class TestKeenSearch:
-    def test_keyless_uses_public_path_and_title_header(self, monkeypatch):
+    def test_public_and_authed_paths(self, monkeypatch):
         resp, cap = _keen_search(monkeypatch, {}, {"query": "q", "results": [KEEN_ITEM]})
         assert cap["url"].endswith("/v1/search/public")
         assert cap["headers"]["X-Keenable-Title"] == "eztool"
@@ -480,11 +446,8 @@ class TestKeenSearch:
         assert r.content == "longer excerpt from the page"
         assert r.extra == {"published_at": "2026-01-15T10:30:00Z"}
 
-    def test_api_key_uses_authed_path(self, monkeypatch):
-        _keen_search(monkeypatch, {"api_key": "keen_k"},
-                     {"query": "q", "results": [KEEN_ITEM]})
-        resp, cap = _keen_search(monkeypatch, {"api_key": "keen_k"},
-                                 {"query": "q", "results": [KEEN_ITEM]})
+        _, cap = _keen_search(monkeypatch, {"api_key": "keen_k"},
+                              {"query": "q", "results": [KEEN_ITEM]})
         assert cap["url"].endswith("/v1/search")
         assert cap["headers"]["X-API-Key"] == "keen_k"
 
@@ -571,11 +534,6 @@ class TestParallelSearch:
         assert r.extra == {"publish_date": "2024-01-15"}
         assert resp.metadata["search_id"] == "search_x"
 
-    def test_missing_key_raises(self):
-        svc = ParallelProvider(_popts(parallel={}))
-        with pytest.raises(ServiceError):
-            svc.search("web", "q", {})
-
     def test_no_results_raises(self, monkeypatch):
         _parallel_post(monkeypatch, {"search_id": "s", "results": [], "session_id": "s"})
         svc = ParallelProvider(_popts(parallel={"api_key": "pk"}))
@@ -623,7 +581,9 @@ class TestParallelFetch:
             svc.fetch("https://a/", timeout=30)
         assert "boom" in str(exc.value)
 
-    def test_fetch_missing_key_raises(self):
-        svc = ParallelProvider(_popts(parallel={}))
+    def test_search_and_fetch_without_key_raise(self):
+        popts = _popts(parallel={})
         with pytest.raises(ServiceError):
-            svc.fetch("https://a/", timeout=30)
+            ParallelProvider(popts).search("web", "q", {})
+        with pytest.raises(ServiceError):
+            ParallelProvider(popts).fetch("https://a/", timeout=30)

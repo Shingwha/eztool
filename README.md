@@ -8,8 +8,8 @@ Zero dependencies, pure Python stdlib.
 
 ```bash
 eztool search "Rust async 2026"           # web search (tavily→doubao→anysearch→keen→parallel fallback chain)
-eztool search "LLM agents" --all          # whole default chain in parallel + merge/dedup
-eztool search "LLM agents" --all --summarize   # + AI synthesis with citations (needs summarize.* config)
+eztool search "LLM agents" --max 15       # sweep the chain until ~15 distinct results
+eztool search "LLM agents" --use keen,tavily --summarize  # two engines, one cited synthesis
 eztool fetch https://example.com/article  # URL → Markdown (markdown_new→tavily→jina_reader→firecrawl→keen→parallel)
 eztool fetch https://a/ https://b/ --summarize --query "pricing"  # multi-URL fetch + AI synthesis
 eztool convert report.pdf --out report.md # local file → Markdown (anydoc→markdown_new→mineru)
@@ -65,16 +65,16 @@ script/src/eztool/
 ```
 
 **Adding a provider, two steps**: ① write `providers/foo.py` (a class declaring
-`name`/`categories`/`config`/`params`/`priority`/`auth_required` plus
+`name`/`categories`/`config`/`priority`/`auth_required` plus
 the capability methods); ② add one import line to `providers/__init__.py`.
-Config keys, CLI params, default chains, `config show` and `--list-providers`
-all appear automatically — a new config key or param touches
+Config keys, default chains, `config show` and `--list-providers`
+all appear automatically — a new config key touches
 only the provider file.
 
 ```bash
 cd script
 uv run python -m eztool.cli --help   # run without installing
-uv run --group dev pytest -q         # tests (138 cases, fully mocked, zero network)
+uv run --group dev pytest -q         # tests (127 cases, fully mocked, zero network)
 uv tool install ".[local]" --force --reinstall   # reinstall after changes
 ```
 

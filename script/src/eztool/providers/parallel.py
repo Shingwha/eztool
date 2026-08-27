@@ -28,7 +28,6 @@ from ..util import NoResultsError
 API_BASE = "https://api.parallel.ai"
 SEARCH_URL = f"{API_BASE}/v1/search"
 EXTRACT_URL = f"{API_BASE}/v1/extract"
-DEFAULT_TIMEOUT = 30
 
 
 @register
@@ -66,7 +65,7 @@ class ParallelProvider(Provider):
         data = self._post(
             SEARCH_URL,
             {"search_queries": ["test"], "advanced_settings": {"max_results": 1}},
-            self.timeout(DEFAULT_TIMEOUT),
+            self.timeout(),
         )
         elapsed = time.monotonic() - t0
         n = len(data.get("results") or [])
@@ -79,7 +78,7 @@ class ParallelProvider(Provider):
             "search_queries": [q],
             "mode": "fast",  # 精简：固定 fast 档（默认均衡）
         }
-        # 不传 max_results → 服务端默认（API 默认 10）；--count 显式覆盖
+        # 不传 max_results → 服务端默认（API 默认 10）；opts["count"] 显式覆盖
         count = opts.get("count")
         if count is not None:
             try:
@@ -89,7 +88,7 @@ class ParallelProvider(Provider):
             if count is not None:
                 body["advanced_settings"] = {"max_results": max(1, count)}
 
-        data = self._post(SEARCH_URL, body, self.timeout(DEFAULT_TIMEOUT))
+        data = self._post(SEARCH_URL, body, self.timeout())
 
         results = []
         for r in (data.get("results") or []):

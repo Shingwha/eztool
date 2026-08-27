@@ -15,48 +15,43 @@ def parse(argv):
 
 
 class TestParserStructure:
-    def test_four_subcommands_exist(self):
-        # 用 func 默认值验证子命令注册（--help 会触发 SystemExit，故不用它探测）
+    def test_subcommand_dispatch_map(self):
         assert parse(["search", "q"]).func is cli.cmd_search
         assert parse(["fetch", "https://x/"]).func is cli.cmd_fetch
         assert parse(["convert", "a.txt"]).func is cli.cmd_convert
+        cases = [("show", [], cli.cmd_config_show), ("set", ["k"], cli.cmd_config_set),
+                 ("get", ["k"], cli.cmd_config_get),
+                 ("reset", ["k"], cli.cmd_config_reset),
+                 ("test", [], cli.cmd_config_test), ("clear", [], cli.cmd_config_clear)]
+        for verb, extra, fn in cases:
+            assert parse(["config", verb, *extra]).func is fn
 
-    def test_config_six_actions(self):
-        assert parse(["config", "show"]).func is cli.cmd_config_show
-        assert parse(["config", "set", "k", "v"]).func is cli.cmd_config_set
-        assert parse(["config", "get", "k"]).func is cli.cmd_config_get
-        assert parse(["config", "reset", "k"]).func is cli.cmd_config_reset
-        assert parse(["config", "test"]).func is cli.cmd_config_test
-        assert parse(["config", "clear"]).func is cli.cmd_config_clear
+    def test_removed_flags_stay_gone(self):
+        # v0.5/v0.6 陆续删除的旗标：保持未知参数（exit 2），防止复活
+        for argv in (["search", "q", "--all"], ["search", "q", "--count", "10"],
+                     ["search", "q", "--image"], ["search", "q", "--source", "f"]):
+            with pytest.raises(SystemExit):
+                parse(argv)
 
-    def test_search_breadth_mutually_exclusive(self):
-        with pytest.raises(SystemExit):
-            parse(["search", "q", "--all", "--use", "doubao"])
-
-    def test_image_and_source_flags_gone(self):
-        # image/data 类别已删除：旧参数不再被接受
-        with pytest.raises(SystemExit):
-            parse(["search", "q", "--image"])
-        with pytest.raises(SystemExit):
-            parse(["search", "q", "--source", "finance.quote"])
+    def test_new_search_flags_parse(self):
+        args = parse(["search", "q", "--use", "doubao,keen", "--max", "12",
+                      "--out", "x.md"])
+        assert (args.use, args.max, args.out) == ("doubao,keen", 12, "x.md")
 
 
 class TestEntryValidation:
-    """fetch/convert 的目标类型校验：走 main() 断言退出码 2。"""
+    """fetch/convert 的目标类型校验：走 main() 断言退出码 2 与 stderr 提示。"""
 
-    def test_fetch_rejects_local_path(self, isolated_config, capsys):
-        with pytest.raises(SystemExit) as exc:
-            cli.main(["fetch", "README.md"])
-        assert exc.value.code == 2
-        assert "convert" in capsys.readouterr().err
-
-    def test_convert_rejects_url(self, isolated_config, capsys):
-        with pytest.raises(SystemExit) as exc:
-            cli.main(["convert", "https://example.com/a.pdf"])
-        assert exc.value.code == 2
-        assert "fetch" in capsys.readouterr().err
-
-    def test_fetch_missing_target(self, isolated_config):
+    def test_target_validation(self, isolated_config, capsys):
+        cases = [
+            (["fetch", "README.md"], "convert"),          # 本地路径 → 该走 convert
+            (["convert", "https://example.com/a.pdf"], "fetch"),
+        ]
+        for argv, hint in cases:
+            with pytest.raises(SystemExit) as exc:
+                cli.main(argv)
+            assert exc.value.code == 2
+            assert hint in capsys.readouterr().err
         with pytest.raises(SystemExit) as exc:
             cli.main(["fetch"])
         assert exc.value.code == 2
@@ -82,6 +77,51 @@ class TestMainExitCodes:
         with pytest.raises(SystemExit) as exc:
             cli.main(["search", "q", "--use", "fake_kbd"])
         assert exc.value.code == 130
+
+
+class TestSearchOutEmit:
+    """search --out：结果写入文件，stdout 只留一行确认（与 fetch/convert 对齐）。"""
+
+    def test_out_writes_file_and_prints_note(self, isolated_config, capsys,
+                                             tmp_path, monkeypatch):
+        from eztool.provider import SearchResponse, SearchResult
+
+        canned = SearchResponse(
+            query="q",
+            results=[SearchResult(title="T1", url="https://a/", snippet="snip")],
+            metadata={"backend": "fake_s"},
+        )
+        monkeypatch.setattr(cli.api, "search", lambda *a, **k: canned)
+        out_path = tmp_path / "results.md"
+        cli.main(["search", "q", "--use", "unused", "--out", str(out_path)])
+        text = out_path.read_text(encoding="utf-8")
+        assert "## Search Results: q" in text
+        assert "[T1](https://a/)" in text
+        assert f"wrote {out_path}" in capsys.readouterr().out
+
+    def test_out_with_summarize_writes_summary(self, isolated_config, capsys,
+                                               tmp_path, monkeypatch):
+        from eztool import summarize as smm
+        from eztool.provider import SearchResponse
+
+        make_search_provider("fake_sum",
+                             results=[{"title": "T", "url": "u",
+                                       "snippet": "usable text"}])
+        monkeypatch.setattr(smm, "post_json", lambda *a, **kw: (
+            200, {}, json.dumps(
+                {"choices": [{"message": {"content": "the answer"}}]}
+            ).encode("utf-8")))
+        for key, val in (("summarize.base_url", "https://llm.test/v1"),
+                         ("summarize.api_key", "sk-test"),
+                         ("summarize.model", "test-model")):
+            cli.main(["config", "set", key, val])
+        capsys.readouterr()
+        out_path = tmp_path / "summary.md"
+        cli.main(["search", "q", "--use", "fake_sum", "--summarize",
+                  "--out", str(out_path)])
+        text = out_path.read_text(encoding="utf-8")
+        assert "## Summary:" in text and "the answer" in text
+        assert f"wrote {out_path}" in capsys.readouterr().out
 
 
 class TestConfigShow:
@@ -113,7 +153,8 @@ class TestSparseConfigFile:
         data = json.loads((isolated_config / "config.json").read_text(encoding="utf-8"))
         assert data == {"providers": {"tavily": {"api_key": "tvly-x"}}}
 
-    def test_set_then_reset_removes_key(self, isolated_config, capsys):
+    def test_reset_semantics(self, isolated_config, capsys):
+        # reset 已设键 = 从稀疏文件删除该键；reset 未设键 = 纯 no-op 不建文件
         cli.main(["config", "set", "chains.web", "doubao"])
         cli.main(["config", "reset", "chains.web"])
         capsys.readouterr()
@@ -121,9 +162,9 @@ class TestSparseConfigFile:
         assert data == {}  # 空段也被清掉
         cli.main(["config", "show"])
         assert "chains.web = " in capsys.readouterr().out  # 合并视图仍有默认链
-
-    def test_reset_absent_key_is_noop(self, isolated_config, capsys):
+        # 无文件的目录里 reset 未设键 = 纯 no-op，连文件都不建
+        (isolated_config / "config.json").unlink()
         cli.main(["config", "reset", "settings.timeout"])
         out = capsys.readouterr().out
         assert "reset settings.timeout = 30" in out
-        assert not (isolated_config / "config.json").exists()  # 无文件也写出空覆盖
+        assert not (isolated_config / "config.json").exists()

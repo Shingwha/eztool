@@ -150,23 +150,41 @@ def resolve_config(cfg: dict) -> dict:
 
 # ── prompt 构建（编号 + 预算截断）─────────────────────────────────────────────
 
+PER_SOURCE_MAX_CHARS = 2500    # 单源喂给 LLM 的正文上限（超出截断并标注）
+TOTAL_SOURCES_MAX_CHARS = 48000  # 全部源合计的字符预算（耗尽即停止收录）
+SOURCE_MIN_KEEP_CHARS = 400    # 剩余预算低于此值时不再收录新源（碎片没价值）
+
 
 def build_user_prompt(
     request: str, items: list[SourceItem]
 ) -> tuple[str, list[Citation]]:
-    """拼装 user prompt：用户 request + 编号内容块；返回 (prompt, 引用表)。"""
+    """拼装 user prompt：用户 request + 编号内容块；返回 (prompt, 引用表)。
+
+    双层预算防 token 爆炸：单源超 ``PER_SOURCE_MAX_CHARS`` 截断标注；
+    合计逼近 ``TOTAL_SOURCES_MAX_CHARS`` 后停止收录（citation 只为实际
+    喂入的源生成——LLM 没见过的来源不出现在引用表里）。
+    """
     citations: list[Citation] = []
     blocks: list[str] = []
+    used = 0
     for it in items:
         text = (it.text or "").strip()
         if not text:
             continue
+        remaining = TOTAL_SOURCES_MAX_CHARS - used
+        if remaining < SOURCE_MIN_KEEP_CHARS:
+            break
+        if len(text) > PER_SOURCE_MAX_CHARS:
+            text = text[:PER_SOURCE_MAX_CHARS].rstrip() + "\n…[trimmed]"
+        if len(text) > remaining:
+            text = text[:remaining].rstrip() + "\n…[trimmed]"
         citations.append(
             Citation(index=len(citations) + 1, title=it.title or it.url,
                      url=it.url, provider=it.provider)
         )
         origin = f" (via {it.provider})" if it.provider else ""
         blocks.append(f"[{citations[-1].index}] {it.title} — {it.url}{origin}\n{text}")
+        used += len(text)
     user = f"Request: {request}\n\nSources:\n\n" + "\n\n".join(blocks)
     return user, citations
 

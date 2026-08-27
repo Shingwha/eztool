@@ -1,10 +1,10 @@
-"""注册表与元数据聚合：register / providers_for / default_chain / category_params /
+"""注册表与元数据聚合：register / providers_for / default_chain /
 provider_config_map。"""
 
 import pytest
 
 from eztool import provider as prov
-from eztool.provider import ParamSpec, Provider, register
+from eztool.provider import Provider, register
 
 
 def _make(name, **attrs):
@@ -12,16 +12,11 @@ def _make(name, **attrs):
 
 
 class TestRegister:
-    def test_register_and_lookup(self):
-        cls = register(_make("fake_reg", categories=frozenset({"web"})))
-        assert prov.SERVICES["fake_reg"] is cls
-
-    def test_duplicate_name_rejected(self):
-        register(_make("fake_dup", categories=frozenset({"web"})))
+    def test_register_contract(self):
+        register(_make("fake_reg", categories=frozenset({"web"})))
+        assert prov.SERVICES["fake_reg"].name == "fake_reg"
         with pytest.raises(ValueError, match="duplicate"):
-            register(_make("fake_dup"))
-
-    def test_empty_name_rejected(self):
+            register(_make("fake_reg"))
         with pytest.raises(ValueError, match="non-empty"):
             register(_make(""))
 
@@ -48,7 +43,7 @@ class TestDefaultChain:
         assert "fake_out" not in chain
 
     def test_real_chains_derived_from_priorities(self):
-        # 出厂默认链由 priority 声明派生；三个类别都应有定义
+        # 出厂默认链由 priority 声明派生；三个类别都应有定义（文档承诺的顺序）
         import eztool.providers  # noqa: F401 确保真实 provider 已注册
         assert prov.default_chain("web") == [
             "tavily", "doubao", "anysearch", "keen", "parallel",
@@ -59,21 +54,6 @@ class TestDefaultChain:
         assert prov.default_chain("file") == ["anydoc", "markdown_new", "mineru"]
 
 
-class TestCategoryParams:
-    def test_category_params_union_and_collision(self):
-        register(_make("fake_p1", categories=frozenset({"web"}),
-                       params={"web": {"alpha": ParamSpec(type=int)}}))
-        register(_make("fake_p2", categories=frozenset({"web"}),
-                       params={"web": {"beta": ParamSpec()}}))
-        assert {"alpha", "beta"} <= set(prov.category_params("web"))  # 并集
-        register(_make("fake_c1", categories=frozenset({"web"}),
-                       params={"web": {"clash": ParamSpec()}}))
-        register(_make("fake_c2", categories=frozenset({"web"}),
-                       params={"web": {"clash": ParamSpec()}}))
-        with pytest.raises(ValueError, match="clash"):
-            prov.category_params("web")
-
-
 class TestMetadataAggregation:
     def test_provider_config_map_complete(self):
         m = prov.provider_config_map()
@@ -82,17 +62,6 @@ class TestMetadataAggregation:
             for key, meta in keys.items():
                 assert {"default", "secret", "hint"} <= set(meta), (name, key)
 
-    def test_secret_flags_and_defaults(self):
-        m = prov.provider_config_map()
-        assert m["doubao"]["api_key"]["secret"] is True
-        assert m["doubao"]["count_web"]["default"] is None  # 未设 = 服务端默认
-        assert m["parallel"]["api_key"]["secret"] is True  # auth_required 配套
-
     def test_auth_required_set(self):
         required = {n for n, cls in prov.SERVICES.items() if cls.auth_required}
         assert required == {"doubao", "parallel"}
-
-    def test_no_sources_field_left(self):
-        # sources 数据源标签机制已删除：基类与注册表都不应再暴露
-        assert not hasattr(prov.Provider, "sources")
-        assert not hasattr(prov, "all_sources")

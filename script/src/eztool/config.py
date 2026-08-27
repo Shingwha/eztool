@@ -3,7 +3,7 @@
 四段式结构：
 
 - ``settings.*``：全局设置（目前只有 ``timeout`` 默认超时，预留扩展）。
-- ``chains.<类别>``：五条回退链（web/image/data/page/file），默认值由
+- ``chains.<类别>``：三条回退链（web/page/file），默认值由
   provider 的 ``priority`` 声明自动派生。
 - ``providers.<name>.*``：各服务商凭证/私有配置，键由 provider 的
   ``config`` 声明自动生成。

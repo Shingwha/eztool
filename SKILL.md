@@ -11,17 +11,17 @@ description: >-
 
 # eztool
 
-One command for search → fetch → convert → config: **search** (web) +
-**fetch** (URL → Markdown) + **convert** (local file → Markdown) + **config**.
-Zero dependencies, pure stdlib; the repo is the skill.
+One CLI: **search** (web) + **fetch** (URL → Markdown) + **convert** (local
+file → Markdown) + **config**. Zero dependencies, pure stdlib; the repo is the
+skill.
 
 ## When to use
 
 | The user wants | Run |
 |---|---|
 | Web search / fact-check / latest info | `eztool search "<q>"` |
-| Broad search (all default providers in parallel, merged + deduped) | `eztool search "<q>" --all` |
-| One synthesized answer across multiple sources | `eztool search "<q>" --all --summarize` — multi-provider results fed to the LLM and written up with citations; **prefer this whenever `--all` or a multi-provider `--use` is involved** (needs `summarize.*` config — see references/guide.md) |
+| A wider sweep | `eztool search "<q>" --max N` |
+| Cross-check engines in one merged list | `eztool search "<q>" --use doubao,keen [--summarize]` |
 | Read a full webpage / article | `eztool fetch <url>` |
 | Convert a local file (PDF/DOCX/XLSX/CSV…) to Markdown | `eztool convert <file> [--out out.md]` |
 | Configure credentials / fallback chains | `eztool config` (see references/guide.md) |
@@ -29,8 +29,8 @@ Zero dependencies, pure stdlib; the repo is the skill.
 ## Command cheat sheet
 
 ```bash
-eztool search "<query>" [--all | --use a,b] [--count N] [--timeout N]
-                        [--list-providers] [--summarize]
+eztool search "<query>" [--use a,b] [--max N] [--out x.md]
+                        [--timeout N] [--list-providers] [--summarize]
 eztool fetch <url>... [--out x.md] [--use a,b] [--timeout N] [--list-providers]
                       [--summarize [--query "focus"]]
 eztool convert <file> [--out x.md] [--use a,b] [--timeout N] [--list-providers]
@@ -38,80 +38,65 @@ eztool convert <file> [--out x.md] [--use a,b] [--timeout N] [--list-providers]
 eztool config show|set|get|reset|test|clear
 ```
 
-- `--use a,b`: one = run it alone; multiple = **search: parallel merge** (URL-dedup,
-  `**[source]**` tagged) / **fetch,convert: sequential override chain** (try in order,
-  stop at first success). Omit → the configured `chains.*` fallback chain.
-- Named providers are never credential-skipped — naming one without credentials is
-  an error (exit 2).
-- **Write `<query>` as a short question, not keyword piles.** The providers are
-  natural-language friendly and a question beats bare keywords in practice
-  (e.g. `"how do tokio and async-std compare in 2026?"` finds decision-oriented
-  results, while `"tokio async-std"` drifts toward tutorials). Include the key
-  terms inside the question. With `--summarize`, the query doubles as the
-  synthesis request — a question steers it, keywords don't.
-- **Time-sensitive queries: use absolute dates, never relative words.**
-  Search engines have no context for "today"/"this week" — write
-  `"Chengdu weather 2026-08-26"` instead of `"Chengdu weather today"`, and
-  `"stock market 2026-08-24..2026-08-30"` instead of `"stock market this week"`
-  (relative words pull stale pages into the results). Single day →
-  `YYYY-MM-DD`; week/month → the `YYYY-MM-DD..YYYY-MM-DD` range (week starts
-  Monday); year → `YYYY`.
-- **`--count` is optional — omit it by default.** The request then carries
-  no count field and each provider's **server-side default** applies
-  (tavily 5, parallel 10, doubao/anysearch/keen server-set). Add `--count N`
-  only when you want a specific result count.
+- **Execution paths** — omitting `--use` walks the configured `chains.*`
+  fallback: serial, first success wins, uncredentialed-but-required providers
+  skipped silently. Naming providers changes things: one = run it alone;
+  multiple = **search** runs them in parallel and merges fairly (round-robin,
+  URL-deduped, source-tagged, hard-capped at 40) while **fetch,convert** try
+  them as a sequential override chain (first success stops). Naming one without
+  credentials is an error (exit 2) instead of a silent skip.
+- **`--max N`** sweeps the provider list in order until ~N distinct results
+  accumulate (the last provider may push slightly past N; the overshoot is
+  kept). Without it, every engine returns its own server-side default count.
+- **Search timing** — with no timeout setting anywhere (`--timeout`,
+  `providers.<name>.timeout`, `settings.timeout` all unset), searches give up
+  at 10 s while fetch/convert allow 30 s; any explicitly set value wins
+  everywhere.
+- **`--out PATH`** redirects output to a file on every command (stdout gets a
+  one-line confirmation).
+- **Phrase `<query>` as a short question**, not keyword piles:
+  `"how do tokio and async-std compare in 2026?"` beats `"tokio async-std"`;
+  a question also steers `--summarize`.
+- **Date-sensitive queries name absolute dates** — `YYYY-MM-DD` for a day,
+  `YYYY-MM-DD..YYYY-MM-DD` for a week/month, `YYYY` for a year. Relative words
+  ("today", "this week") mean nothing to engines and pull stale pages.
 
 ## Core rules
 
-- **Fallback chains (default path)**: serial, first success wins; providers with
-  `auth_required` but no credentials are auto-skipped, anonymous ones always run.
-  Defaults derive from each provider's `priority`; override with
-  `eztool config set chains.web "a,b"`.
-  Stale names in configured chains (e.g. after removing a provider) are warned
-  about on stderr and dropped — never fatal.
-- **Quality gate** (fetch/convert): content whose first 200 chars hit blocking
-  phrases (captcha / Cloudflare / Chinese verification-wall wording) and is
-  <800 chars = bot-check page → treat as failure and fall through; 800–1500 =
-  suspicious → kept as backup (returned with a stderr warning only if
-  everything else fails). WeChat verification pages therefore fall back
-  automatically — never return them.
-- **`--summarize`** (search/fetch/convert): after retrieval, an OpenAI-compatible
-  LLM synthesizes an answer with citations — output is the answer + a Sources
-  list (`[n] title — url **[provider]**`, program-generated, never LLM-written
-  links). Raw results are replaced; LLM failure degrades back to raw output
-  (stderr warning). fetch takes multiple URLs (parallel); for fetch/convert
-  **always add `--query "focus"`** — a concrete question beats the generic
-  summary fallback by a wide margin (search uses its own query as the request).
-  **Multi-provider searches prefer `--summarize`**: the point of `--all` /
-  multi-provider `--use` is cross-source coverage, and the LLM synthesis is
-  what turns overlapping raw results into one deduplicated, cited answer — so
-  use `eztool search "<q>" --all --summarize` (or `--use a,b --summarize`)
-  whenever summaries are configured; a plain single-provider search without
-  `--summarize` is the lightweight default.
-  Requires explicit `summarize.base_url` / `summarize.api_key`
-  / `summarize.model` — missing config = exit 2 before any retrieval.
-- **Credentials**: doubao / parallel require keys (doubao: api_key or ak+sk);
-  anysearch / tavily / keen / firecrawl / jina_reader / markdown_new / mineru /
-  anydoc work anonymously (keys raise quota; a mineru token upgrades to the
-  v4 API).
-  On credential errors tell the user `eztool config set providers.<name>.api_key`;
-  **never hardcode keys**. Config lives at `~/.config/eztool/config.json`.
-- **Exit codes**: 0 success / 1 operational failure (incl. no results) / 2 usage
-  or missing credentials. stderr `[provider] OK (elapsed, size)` lines are the
-  chain log — check them to see which backend actually served.
+- **Quality gate** (fetch/convert): short content (<800 chars) hitting
+  blocking phrases (captcha / Cloudflare / “环境异常”) in its first 200 chars
+  is a bot-check page and falls through automatically; 800–1500 chars with a
+  hit stays as backup, returned only if every provider fails (with a warning).
+- **`--summarize`** (search/fetch/convert): retrieval first, then an
+  OpenAI-compatible LLM synthesizes an answer whose citation links are
+  program-generated from the actual result set; the raw output is replaced,
+  and LLM failure degrades back to raw (stderr warning). Give fetch/convert a
+  concrete `--query "focus"` — it is the difference between a targeted answer
+  and a flat abstract (search reuses its own query). Needs
+  `summarize.base_url` / `.api_key` / `.model`; missing config exits 2 before
+  any retrieval.
+- **Credentials** live in `~/.config/eztool/config.json`, settable via
+  `eztool config set providers.<name>.api_key`; **never hardcode keys**.
+  doubao / parallel require keys; the rest work anonymously and keys raise
+  quota (a mineru token upgrades to the v4 API).
+- **Exit codes**: 0 success / 1 operational failure (no results, API error) /
+  2 usage or missing credentials / 130 Ctrl+C. Stderr lines like
+  `[provider] OK (elapsed, size)` form the chain log showing which backend
+  served.
 
 ## Agent workflow
 
-1. **Search**: `eztool search "<one-sentence question>"` (ask what you want to
-   know — a question query beats keyword lists); for broad coverage add `--all`, and
-   pair it with `--summarize` so the merged results come back as one cited
-   answer rather than raw lists (needs `summarize.*` config).
-2. **Read full text**: `eztool fetch <url>` for URLs in results (output is never
-   truncated); `eztool convert <file> --out out.md` for local files.
-3. **Credential errors** (exit 2): guide the user through
-   `eztool config set providers.<name>.api_key`, verify with `eztool config test`.
-4. **Failures**: exit 1 = operational (no results / API error), exit 2 = usage or
-   credentials; stderr format is `error: <reason>` + `code: <semantic code>`.
+1. **Start narrow**: one plain `eztool search "<one-sentence question>"`.
+   When results feel thin, widen deliberately — reword the query, pin another
+   engine with `--use`, sweep wider with `--max N`, or run
+   `--use a,b --summarize` for cross-verification. Skip URLs collected in
+   earlier rounds.
+2. **Go deep**: `eztool fetch <url1> <url2>` (parallel, never truncated) for
+   promising links; `eztool convert <file> --out out.md` for local files.
+3. **On failure**, read the stderr chain log first. Exit 1 → consider retrying
+   via `--use` / a raised `--timeout`. Exit 2 → walk the user through
+   `eztool config set providers.<name>.api_key` and verify with
+   `eztool config test`.
 
 ## Resources
 

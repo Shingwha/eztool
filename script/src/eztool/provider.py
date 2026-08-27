@@ -1,10 +1,10 @@
 """Provider 基类 + 注册表 + 元数据聚合。
 
 每个 provider 文件 = 一个模块，内含：实现类 + 元数据声明（config 配置键 /
-params CLI 参数面 / priority 默认链排序 / auth_required 凭证要求）。注册点
-收敛在 ``providers/__init__.py`` 的显式 import 列表——没 import 的模块不注
-册，新增 provider = 写一个文件 + 加一行 import，其余（config 键、CLI 参数、
-默认链、config show）全部自动出现。
+priority 默认链排序 / auth_required 凭证要求）。注册点收敛在
+``providers/__init__.py`` 的显式 import 列表——没 import 的模块不注册，
+新增 provider = 写一个文件 + 加一行 import，其余（config 键、默认链、
+config show）全部自动出现。
 
 类别（category）是三个短名：``web``（search 域）+ ``page`` / ``file``
 （convert 域），与配置 ``chains.<类别>`` 键同名。
@@ -36,8 +36,8 @@ __all__ = [
     "CATEGORY_NETWORK", "CATEGORY_TIMEOUT", "ServiceError",
     "USER_AGENT", "build_multipart", "ensure_ascii", "http_get", "post_json",
     "FetchResult", "ProviderOpts", "SearchResult", "SearchResponse",
-    "ParamSpec", "Provider", "register", "SERVICES", "providers_for",
-    "category_params", "default_chain", "provider_config_map",
+    "Provider", "register", "SERVICES", "providers_for",
+    "default_chain", "provider_config_map",
     "SEARCH_CATEGORIES", "CONVERT_CATEGORIES",
 ]
 
@@ -96,25 +96,10 @@ class SearchResponse:
     citations: list | None = None  # --summarize 的确定性引用表（summarize.Citation）
 
 
-@dataclass
-class ParamSpec:
-    """provider 特有参数的声明（CLI 自动生成 argparse 参数）。
-
-    type 仅 str/int；bool 用 action="store_true"（默认 None，传了为 True）。
-    """
-
-    help: str = ""
-    type: type = str
-    metavar: str | None = None
-    choices: tuple | None = None
-    action: str | None = None  # "store_true"
-
-
 class Provider:
     """服务商基类。子类声明元数据 + 实现对应能力方法。
 
     - ``categories``：支持哪些类别（web/page/file），回退链据此过滤。
-    - ``params``：``{类别: {参数名: ParamSpec}}``，CLI 参数面自动并入。
     - ``config``：``{配置键: {default, secret, hint}}``（相对 providers.<name>
       段），自动生成 DEFAULTS / SECRET_KEYS / KEY_HINTS——加配置键只改这里。
     - ``priority``：``{类别: 排序值}``，默认回退链按此排序（小在前）。不声明
@@ -125,7 +110,6 @@ class Provider:
 
     name: str = ""
     categories: frozenset = frozenset()
-    params: dict[str, dict[str, ParamSpec]] = {}
     config: dict[str, dict[str, Any]] = {}
     priority: dict[str, int] = {}
     auth_required: bool = False
@@ -167,9 +151,9 @@ class Provider:
         """Compose the service endpoint for a URL（非 ASCII 自动百分号编码）。"""
         return self.base_url + ensure_ascii(url).lstrip("/")
 
-    def timeout(self, default: int = 30) -> int:
-        """生效超时：api 层解析后注入；未注入时回落 default。"""
-        return int((self.opts.timeouts or {}).get(self.name, default))
+    def timeout(self) -> int:
+        """生效超时：api 层解析后注入（cli > provider 配置 > 全局/搜索快速缺省）。"""
+        return int((self.opts.timeouts or {}).get(self.name, 30))
 
     def parse_body(self, status: int, headers, body: bytes) -> str:
         """Turn the raw response body into markdown text（默认按 UTF-8 解码）。"""
@@ -233,20 +217,6 @@ def register(cls: type[Provider]) -> type[Provider]:
 def providers_for(category: str) -> list[str]:
     """该类别的全部候选 provider（注册顺序）。未知类别返回空列表。"""
     return [n for n, cls in SERVICES.items() if category in cls.categories]
-
-
-def category_params(category: str) -> dict[str, ParamSpec]:
-    """该类别全部参数：provider 特有参数并集（CLI 生成 argparse 用）。"""
-    out: dict[str, ParamSpec] = {}
-    for name in providers_for(category):
-        for pname, spec in (SERVICES[name].params or {}).get(category, {}).items():
-            if pname in out:
-                raise ValueError(
-                    f"param '{pname}' of '{name}' collides with another provider "
-                    f"in category '{category}' (rename it)"
-                )
-            out[pname] = spec
-    return out
 
 
 def default_chain(category: str) -> list[str]:

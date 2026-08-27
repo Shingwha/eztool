@@ -43,19 +43,14 @@ def _openai_ok(content="synthesized answer [1]"):
 # ════════════════════════════════════════════════════════════════════════════
 
 class TestResolveConfig:
-    def test_missing_required_keys_is_usage_error(self, base_cfg):
+    def test_config_validation(self, base_cfg):
         cfg = base_cfg() | {"summarize": {"backend": "openai"}}
         with pytest.raises(UsageError) as exc:
             smm.resolve_config(cfg)
         for key in ("summarize.base_url", "summarize.api_key", "summarize.model"):
             assert key in str(exc.value)
-
-    def test_unknown_backend_is_usage_error(self, base_cfg):
-        cfg = _cfg(base_cfg, backend="nope")
         with pytest.raises(UsageError, match="nope"):
-            smm.resolve_config(cfg)
-
-    def test_valid_config_passes(self, base_cfg):
+            smm.resolve_config(_cfg(base_cfg, backend="nope"))
         assert smm.resolve_config(_cfg(base_cfg))["model"] == "test-model"
 
 
@@ -77,6 +72,33 @@ class TestBuildUserPrompt:
         assert [c.index for c in citations] == [1, 2]
         assert citations[0].provider == "keen"
         assert citations[1].url == "https://b/"
+
+
+class TestPromptBudget:
+    """双层预算：单源截断标注；总量耗尽后停止收录，淘汰源不入引用表。"""
+
+    def test_per_source_trimmed_with_marker(self, monkeypatch):
+        monkeypatch.setattr(smm, "PER_SOURCE_MAX_CHARS", 50)
+        item = smm.SourceItem(title="Big", url="https://big/", text="x" * 120)
+        user, citations = smm.build_user_prompt("req", [item])
+        assert user.count("x") == 50
+        assert "…[trimmed]" in user
+        assert [c.index for c in citations] == [1]
+
+    def test_total_budget_excludes_late_sources_from_citations(
+            self, monkeypatch):
+        # per 拉高使本场景只受总预算约束：890 用掉后剩余 < keep → 后续全淘汰
+        monkeypatch.setattr(smm, "PER_SOURCE_MAX_CHARS", 10 ** 6)
+        monkeypatch.setattr(smm, "TOTAL_SOURCES_MAX_CHARS", 900)
+        monkeypatch.setattr(smm, "SOURCE_MIN_KEEP_CHARS", 350)
+        items = [
+            smm.SourceItem(title="A", url="ua/", text="a" * 890),
+            smm.SourceItem(title="B", url="ub/", text="b" * 500),
+            smm.SourceItem(title="C", url="uc/", text="c" * 500),
+        ]
+        user, citations = smm.build_user_prompt("req", items)
+        assert [c.index for c in citations] == [1]
+        assert "B" not in user and "[2]" not in user  # 淘汰源不占编号
 
 
 class TestOpenAISummarizer:
@@ -111,12 +133,10 @@ class TestOpenAISummarizer:
 
 
 class TestSummarizeEntry:
-    def test_empty_items_raise(self, base_cfg):
+    def test_empty_items_raise_then_happy_path(self, base_cfg, monkeypatch):
         with pytest.raises(ServiceError, match="nothing to summarize"):
             smm.summarize(_cfg(base_cfg), "q",
                           [smm.SourceItem(title="t", url="u", text="  ")])
-
-    def test_end_to_end(self, base_cfg, monkeypatch):
         monkeypatch.setattr(smm, "post_json", _openai_ok())
         summary = smm.summarize(
             _cfg(base_cfg), "q",
@@ -158,15 +178,7 @@ class TestSearchSummarize:
 
 
 class TestFetchMany:
-    def test_multiple_urls_in_input_order(self, base_cfg):
-        make_fetch_provider("fake_p", content="page body")
-        results, errors = api.fetch_many(
-            base_cfg(), ["https://a/", "https://b/", "https://c/"],
-            {"use": "fake_p"})
-        assert errors == []
-        assert [r.url for r in results] == ["https://a/", "https://b/", "https://c/"]
-
-    def test_partial_failure_collected(self, base_cfg):
+    def test_results_in_input_order_with_errors_collected(self, base_cfg):
         from eztool.provider import Provider, register
 
         class _Flaky(Provider):
@@ -181,9 +193,9 @@ class TestFetchMany:
 
         register(_Flaky)
         results, errors = api.fetch_many(
-            base_cfg(), ["https://ok/", "https://bad/"], {"use": "fake_flaky"})
-        assert [r.url for r in results] == ["https://ok/"]
-        assert errors[0][0] == "https://bad/"
+            base_cfg(), ["https://a/", "https://bad/"], {"use": "fake_flaky"})
+        assert [r.url for r in results] == ["https://a/"]  # 输入顺序保持
+        assert errors[0][0] == "https://bad/"  # 单个失败不拖死整批
 
     def test_all_failed_raises(self, base_cfg):
         make_fetch_provider("fake_dead",
@@ -237,11 +249,6 @@ class TestCliSummarize:
         make_search_provider("fake_s", results=[{"title": "t", "url": "u"}])
         with pytest.raises(SystemExit) as exc:
             cli.main(["search", "q", "--use", "fake_s", "--summarize"])
-        assert exc.value.code == 2
-
-    def test_image_summarize_rejected(self, isolated_config):
-        with pytest.raises(SystemExit) as exc:
-            cli.main(["search", "q", "--image", "--summarize"])
         assert exc.value.code == 2
 
     def test_fetch_multiple_urls_concat(self, isolated_config, capsys):

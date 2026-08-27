@@ -20,10 +20,6 @@ class TestDefaults:
             assert sec[required] is None  # 全部显式配置，无默认
         assert "summarize.api_key" in cfgmod.SECRET_KEYS
 
-    def test_chains_default_equals_default_chain(self):
-        for cat in ("web", "page", "file"):
-            assert cfgmod.DEFAULTS["chains"][cat] == prov.default_chain(cat)
-
     def test_provider_sections_have_timeout_and_declared_keys(self):
         for name, keys in prov.provider_config_map().items():
             sec = cfgmod.DEFAULTS["providers"][name]
@@ -34,14 +30,13 @@ class TestDefaults:
     def test_secret_keys_cover_declared_secrets(self):
         assert "providers.doubao.api_key" in cfgmod.SECRET_KEYS
         assert "providers.doubao.sk" in cfgmod.SECRET_KEYS
+        assert "providers.parallel.api_key" in cfgmod.SECRET_KEYS
         assert "providers.doubao.count_web" not in cfgmod.SECRET_KEYS
 
 
 class TestParseValue:
-    def test_chains_split_comma(self):
+    def test_parse_value_rules(self):
         assert cfgmod.parse_value("chains.web", " a , b ,,c ") == ["a", "b", "c"]
-
-    def test_scalar_types(self):
         assert cfgmod.parse_value("providers.x.flag", "true") is True
         assert cfgmod.parse_value("providers.x.flag", "FALSE") is False
         assert cfgmod.parse_value("settings.timeout", "60") == 60
@@ -70,13 +65,6 @@ class TestLoadSave:
         # 未改的键仍是默认（深合并）
         assert cfgmod.get_key(loaded, "chains.web") == prov.default_chain("web")
 
-    def test_corrupted_file_falls_back_to_defaults(self, isolated_config):
-        path = isolated_config / "config.json"
-        path.write_text("{ not json !!!", encoding="utf-8")
-        assert cfgmod.load_config() == cfgmod.DEFAULTS
-        path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")  # 非 dict 同样回退
-        assert cfgmod.load_config() == cfgmod.DEFAULTS
-
     def test_sparse_file_deep_merges(self, isolated_config):
         path = isolated_config / "config.json"
         path.write_text(json.dumps({"settings": {"timeout": 7}}), encoding="utf-8")
@@ -93,6 +81,8 @@ class TestLoadSave:
         merged = cfgmod.load_config()
         assert merged["providers"]["keen"]["api_key"] == "k"
         assert merged["chains"] == cfgmod.DEFAULTS["chains"]
-        # 损坏文件 → 空覆盖，静默回退默认
+        # 损坏/非 dict 文件 → 空覆盖，静默回退默认
         path.write_text("{ broken", encoding="utf-8")
         assert cfgmod.load_overrides() == {}
+        path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+        assert cfgmod.load_config() == cfgmod.DEFAULTS

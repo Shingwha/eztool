@@ -2,15 +2,21 @@
 
 执行语义（与命令面对齐）：
 
-- 缺省：走 ``chains.<类别>`` 回退链（串行，第一个成功即返回；自动跳过
+- search 缺省：走 ``chains.web`` 回退链（串行，第一个成功即返回；自动跳过
   auth_required 且未配凭证的 provider）。
-- search ``--use a,b`` / ``--all``：**并行**跑多个 provider，结果按 URL
-  去重合并、标注来源（``--all`` = 该类别默认链全员并行）。
+- search ``--use a,b``：点名多个才**并行**，公平轮转去重合并并标注来源，
+  结果总数受安全阀上限保护。
+- search ``--max N``：**逐家升级**——沿链（或 ``--use`` 名单）顺序询问，
+  去重累计达到 N 即停手（最后一家自然超出，不修剪）。
 - fetch/convert ``--use a,b``：**顺序覆盖链**——按给定顺序串行试
   （同一内容不重复打 API）。显式点名的 auth_required provider 未配凭证
   直接报错，不静默跳过。
 
-内容质量门（拦截页/可疑内容）统一收口在 ``_convert_chain`。
+内容质量门（拦截页/可疑内容）统一收口在 ``_convert_chain``。
+
+搜索超时：任一显式配置（``--timeout`` / ``providers.<n>.timeout`` /
+``settings.timeout``）照常生效；全都没配时 web 搜索用快速缺省
+（``SEARCH_DEFAULT_TIMEOUT``），抓取/转换不受影响。
 
 ``--summarize``（search/fetch/convert 通用）：内容拿到后再过一道
 ``summarize`` 模块做 AI 提炼——search 回填 ``resp.answer`` + ``citations``
@@ -138,32 +144,86 @@ def _raise_all_failed(kind: str, names: list[str]) -> None:
 
 # ── search ───────────────────────────────────────────────────────────────────
 
+MERGED_HARD_CAP = 40        # 多名并行合并的安全阀（无 --max 的路径）
+SEARCH_DEFAULT_TIMEOUT = 10  # 零显式超时配置时，web 搜索的快速缺省
+
 
 def search(
     cfg: dict, category: str, query: str, opts: dict | None = None,
 ) -> SearchResponse:
-    """按类别路由搜索。无 --use/--all → 回退链；有 → 并行合并。"""
-    opts = dict(opts or {})
-    popts = _provider_opts(cfg, opts.pop("timeout", None))
-    use = _parse_use(opts.pop("use", None))
-    run_all = bool(opts.pop("all", False))
-    want_summary = bool(opts.pop("summarize", False))
+    """按类别路由搜索。
 
-    if use:  # 显式并行/单跑（不跳过凭证检查，点名了没配就报错）
+    - 缺省：回退链，第一家成功即返回。
+    - ``--use A,B``：全员并行，公平轮转去重合并（安全阀 ``MERGED_HARD_CAP``）。
+    - ``--max N``：沿名单逐家升级，去重累计 ≥N 即停手（最后一家可自然超出；
+      缺省链与点名名单皆适用）。
+
+    opts 只认保留键（``use`` / ``max`` / ``timeout`` / ``summarize`` /
+    ``fast_timeout_default``），出现未知键是用法错误——不留静默透传通道。
+    """
+    opts = dict(opts or {})
+    fast_default = bool(opts.pop("fast_timeout_default", True))
+    popts = _search_provider_opts(cfg, opts.pop("timeout", None), fast_default)
+    use = _parse_use(opts.pop("use", None))
+    target = _parse_max(opts.pop("max", None))
+    want_summary = bool(opts.pop("summarize", False))
+    if opts:
+        raise UsageError(f"unknown search option(s): {', '.join(sorted(opts))}")
+
+    if use:
         _check_provider_names(use)
         _check_credentials(use, popts)
-        resp = _search_parallel(cfg, category, query, opts, use, popts)
+        names = use
     else:
         names = _credentialed_chain(cfg, category, popts)
-        if run_all:  # --all：默认链全员并行
-            resp = _search_parallel(cfg, category, query, opts, names, popts)
-        else:
-            resp = _search_chain(cfg, category, query, opts, names, popts)
+
+    if target:
+        resp = _search_escalate(category, query, opts, names, popts, target)
+    elif use and len(use) > 1:
+        resp = _search_parallel(category, query, opts, names, popts)
+    else:
+        resp = _search_chain(category, query, opts, names, popts)
     if resp.metadata is None:
         resp.metadata = {}
     if want_summary:
         _apply_search_summary(cfg, query, resp)
     return resp
+
+
+def _parse_max(raw) -> int | None:
+    """``--max`` → 目标条数；非法值是用法错误。"""
+    if raw is None:
+        return None
+    try:
+        target = int(raw)
+    except (TypeError, ValueError):
+        raise UsageError(f"--max expects an integer, got: {raw!r}") from None
+    if target < 1:
+        raise UsageError("--max must be >= 1")
+    return target
+
+
+def _search_provider_opts(
+    cfg: dict, cli_timeout: int | None, fast_default: bool = True,
+) -> ProviderOpts:
+    """搜索专用 ProviderOpts：零显式超时配置时用快速缺省。
+
+    显式优先级不变（``cli_timeout`` > ``providers.<n>.timeout`` >
+    ``settings.timeout``）；三者都未涉足时（``fast_default=True``，
+    由 CLI 读稀疏配置文件判断），把 web 类别中没有独立 timeout 的
+    provider 覆写为 ``SEARCH_DEFAULT_TIMEOUT``——搜索不必久等，
+    fetch/convert 各自的解析路径不受影响。
+    """
+    popts = _provider_opts(cfg, cli_timeout)
+    if cli_timeout or not fast_default:
+        return popts
+    secs = cfg.get("providers") or {}
+    for name in prov.providers_for("web"):
+        sec = secs.get(name)
+        if isinstance(sec, dict) and sec.get("timeout"):
+            continue
+        popts.timeouts[name] = SEARCH_DEFAULT_TIMEOUT
+    return popts
 
 
 def _apply_search_summary(cfg: dict, query: str, resp: SearchResponse) -> None:
@@ -193,7 +253,7 @@ def _apply_search_summary(cfg: dict, query: str, resp: SearchResponse) -> None:
     _log(f"[summarize] OK ({_elapsed(t0)}s, {len(summary.citations)} sources)")
 
 
-def _search_chain(cfg, category, query, opts, names, popts) -> SearchResponse:
+def _search_chain(category, query, opts, names, popts) -> SearchResponse:
     """回退链：按序尝试，第一个成功即返回（失败自动换下一个）。"""
     for name in names:
         svc = prov.SERVICES[name](popts)
@@ -211,15 +271,61 @@ def _search_chain(cfg, category, query, opts, names, popts) -> SearchResponse:
     _raise_all_failed("search", names)
 
 
-def _search_parallel(cfg, category, query, opts, names, popts) -> SearchResponse:
-    """并行跑指定 provider，结果按 URL 去重合并，标注来源。单个失败不影响其他。"""
-    results: list[SearchResult] = []
+def _tag_results(resp, name: str) -> list[SearchResult]:
+    """给一份搜索结果的每条打上来源标注。"""
+    rows = []
+    for r in resp.results or []:
+        r.source = name
+        rows.append(r)
+    return rows
+
+
+def _dedup_round_robin(
+    buckets: dict[str, list[SearchResult]], order: list[str], cap: int | None = None,
+) -> tuple[list[SearchResult], int]:
+    """公平轮转合并：按 ``order`` 每家轮流出一条，key（URL，缺失回退标题）
+    首见者入选、其余丢弃；到 ``cap`` 即提前收工。
+
+    返回 ``(merged, available)``——available 是全部候选条数，供调用方判断
+    是否发生了截断。
+    """
+    merged: list[SearchResult] = []
+    seen: set[str] = set()
+    available = sum(len(v) for v in buckets.values())
+    depth = 0
+    progressing = True
+    while progressing:
+        progressing = False
+        for name in order:
+            bucket = buckets.get(name) or []
+            if depth >= len(bucket):
+                continue
+            progressing = True
+            if cap is not None and len(merged) >= cap:
+                return merged, available
+            r = bucket[depth]
+            key = r.url or r.title
+            if key:
+                if key in seen:
+                    continue
+                seen.add(key)
+            merged.append(r)
+        depth += 1
+    return merged, available
+
+
+def _search_parallel(category, query, opts, names, popts) -> SearchResponse:
+    """点名并行：全员同发，公平轮转去重合并（安全阀 MERGED_HARD_CAP）。
+
+    单家失败不影响其余；全部失败才抛 ALL_FAILED。结果顺序由名单顺序
+    决定（不随线程完成时序抖动）。
+    """
+    buckets: dict[str, list[SearchResult]] = {}
     answers: list[str] = []
-    ok_names: list[str] = []
 
     def run(name: str):
         svc = prov.SERVICES[name](popts)
-        return name, svc.search(category, query, opts)
+        return svc.search(category, query, opts)
 
     with ThreadPoolExecutor(max_workers=len(names)) as ex:
         futures = {ex.submit(run, n): n for n in names}
@@ -227,35 +333,67 @@ def _search_parallel(cfg, category, query, opts, names, popts) -> SearchResponse
             name = futures[fut]
             t0 = _now()
             try:
-                _, resp = fut.result()
+                resp = fut.result()
             except ServiceError as e:
                 _log(f"[{name}] failed: {e} ({_elapsed(t0)}s)")
                 continue
-            ok_names.append(name)
             if resp.answer:
                 answers.append(resp.answer)
-            for r in resp.results or []:
-                r.source = name
-                results.append(r)
+            buckets[name] = _tag_results(resp, name)
             _log(f"[{name}] OK ({_elapsed(t0)}s, {_size(resp)})")
 
-    if not ok_names:
+    if not buckets:
         _raise_all_failed("search", names)
 
-    merged: list[SearchResult] = []
-    seen: set[str] = set()
-    for r in results:
-        key = r.url or r.title
-        if key and key in seen:
-            continue
-        if key:
-            seen.add(key)
-        merged.append(r)
-
+    merged, available = _dedup_round_robin(buckets, names, cap=MERGED_HARD_CAP)
+    metadata = {"backend": ",".join(n for n in names if n in buckets)}
+    if available > len(merged):
+        metadata["truncated"] = True
+        _log(f"[merge] capped at {len(merged)} "
+             f"({available - len(merged)} candidates dropped; narrow --use)")
     return SearchResponse(
         query=query, results=merged,
         answer="\n\n".join(a for a in answers if a) or None,
-        metadata={"backend": ",".join(ok_names)},
+        metadata=metadata,
+    )
+
+
+def _search_escalate(
+    category, query, opts, names, popts, target: int,
+) -> SearchResponse:
+    """``--max`` 升级链：沿名单逐家询问，去重累计达到 target 即停手。
+
+    最后一家自然超出不修剪；名单耗尽仍不足则带已有结果返回。
+    """
+    buckets: dict[str, list[SearchResult]] = {}
+    answers: list[str] = []
+    served: list[str] = []
+    merged: list[SearchResult] = []
+
+    for name in names:
+        svc = prov.SERVICES[name](popts)
+        t0 = _now()
+        try:
+            resp = svc.search(category, query, opts)
+        except ServiceError as e:
+            _log(f"[{name}] failed: {e} ({_elapsed(t0)}s) -> next provider")
+            continue
+        if resp.answer:
+            answers.append(resp.answer)
+        buckets[name] = _tag_results(resp, name)
+        served.append(name)
+        merged, _ = _dedup_round_robin(buckets, names)
+        _log(f"[{name}] OK ({_elapsed(t0)}s, {_size(resp)}, "
+             f"{len(merged)}/{target})")
+        if len(merged) >= target:
+            break
+
+    if not served:
+        _raise_all_failed("search", names)
+    return SearchResponse(
+        query=query, results=merged,
+        answer="\n\n".join(a for a in answers if a) or None,
+        metadata={"backend": ",".join(served)},
     )
 
 

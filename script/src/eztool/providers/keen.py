@@ -27,7 +27,6 @@ from ..provider import (
 from ..util import NoResultsError
 
 API_BASE = "https://api.keenable.ai"
-DEFAULT_TIMEOUT = 30
 APP_TITLE = "eztool"  # public 端点必填的应用标识（X-Keenable-Title）
 
 
@@ -57,7 +56,7 @@ class KeenProvider(Provider):
 
     def test_credentials(self) -> str:
         t0 = time.monotonic()
-        data = self._search("test", self.timeout(DEFAULT_TIMEOUT))
+        data = self._search("test", self.timeout())
         elapsed = time.monotonic() - t0
         mode = "keyless" if not self.api_key else "api_key"
         n = len(data.get("results") or [])
@@ -76,7 +75,7 @@ class KeenProvider(Provider):
 
     def search(self, category: str, query: str, opts: dict) -> SearchResponse:
         # 注意：/v1/search 无条数参数（count 不适用），结果数由服务端决定
-        data = self._search(query.strip(), self.timeout(DEFAULT_TIMEOUT))
+        data = self._search(query.strip(), self.timeout())
 
         results = [
             SearchResult(

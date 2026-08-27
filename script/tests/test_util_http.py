@@ -1,6 +1,6 @@
-"""HTTP 辅助函数的默认 User-Agent 注入。
+"""HTTP 辅助：默认 User-Agent 注入 / 显式 UA 保留 / post_json 头。
 
-全部 mock urlopen，捕获实际发出的 Request 断言 headers。
+全部 mock urlopen（UA 缺失会被 Cloudflare 类网关 403——见 d177e39 的修复）。
 """
 
 import urllib.request
@@ -23,17 +23,12 @@ def _capture(monkeypatch):
     return seen
 
 
-def test_default_user_agent_injected(monkeypatch):
+def test_user_agent_injected_or_preserved(monkeypatch):
     seen = _capture(monkeypatch)
     http_get("https://svc.test/x", {"Accept": "text/markdown"}, 5)
-    # urllib 默认 Python-urllib UA 会被 Cloudflare 类网关 403，必须补常量
     assert seen[0].get_header("User-agent") == USER_AGENT
-
-
-def test_explicit_user_agent_preserved(monkeypatch):
-    seen = _capture(monkeypatch)
     http_get("https://svc.test/x", {"User-Agent": "custom-agent/1.0"}, 5)
-    assert seen[0].get_header("User-agent") == "custom-agent/1.0"
+    assert seen[1].get_header("User-agent") == "custom-agent/1.0"
 
 
 def test_post_json_headers(monkeypatch):

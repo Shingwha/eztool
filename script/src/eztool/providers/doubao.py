@@ -231,7 +231,7 @@ def _opt_str(opts: dict, d: dict, key: str) -> Any:
 
 def _build_body(query: str, opts: dict, d: dict) -> dict:
     body: dict = {"Query": query, "SearchType": "web"}
-    # 不传 Count → 服务端默认条数；--count 或 count_web 配置显式覆盖
+    # 不传 Count → 服务端默认条数；opts["count"] 或 count_web 配置显式覆盖
     count = opts.get("count")
     if count is None:
         count = d.get("count_web")

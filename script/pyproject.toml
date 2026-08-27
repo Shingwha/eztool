@@ -1,6 +1,6 @@
 [project]
 name = "eztool"
-version = "0.5.0"
+version = "0.6.0"
 description = "Unified CLI: search (web) + fetch (URL to Markdown) + convert (file to Markdown) + config. One tool, one skill."
 readme = {text = "eztool: unified search / fetch / convert / config CLI (see repo root README.md)", content-type = "text/plain"}
 requires-python = ">=3.10"

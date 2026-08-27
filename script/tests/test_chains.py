@@ -66,6 +66,14 @@ class TestSearchChain:
         with pytest.raises(UsageError):
             api.search(base_cfg(), "web", "q", {"use": "nope"})
 
+    def test_unknown_opt_keys_hard_error(self, base_cfg):
+        # opts 只认保留键：未知键硬报错，不留静默透传通道
+        make_search_provider("ch_a", results=OK)
+        cfg = base_cfg(chains={"web": ["ch_a"]})
+        with pytest.raises(UsageError) as exc:
+            api.search(cfg, "web", "q", {"banana": 1, "timeout": None})
+        assert "banana" in str(exc.value)
+
     def test_stale_names_in_config_chain_warn_and_filter(self, base_cfg, capsys):
         # 配置链残留已删除的 provider 名（旧配置升级）→ 警告后剔除，不硬停
         a = make_search_provider("ch_a", results=OK)
@@ -76,7 +84,7 @@ class TestSearchChain:
         assert "unknown providers" in capsys.readouterr().err
 
 
-# ── search 并行（--use a,b / --all）──────────────────────────────────────────
+# ── search 并行（--use 多名）/ --max 升级链 ─────────────────────────────────
 
 
 class TestSearchParallel:
@@ -86,11 +94,25 @@ class TestSearchParallel:
         make_search_provider("pb", results=[{"title": "b1", "url": "u2"},
                                             {"title": "dup-b", "url": "same"}])
         resp = api.search(base_cfg(), "web", "q", {"use": "pa,pb"})
-        urls = sorted(r.url for r in resp.results)
-        assert urls == ["same", "u1", "u2"]  # 按 URL 去重
+        # 公平轮转：pa 出一条、pb 出一条……首见 URL 入选，重复的丢弃
+        assert [r.url for r in resp.results] == ["u1", "u2", "same"]
         assert {r.source for r in resp.results} <= {"pa", "pb"}
         assert all(r.source for r in resp.results)  # 每条都标注来源
-        assert resp.metadata["backend"] in ("pa,pb", "pb,pa")
+        assert resp.metadata["backend"] == "pa,pb"
+
+    def test_merged_capped_at_hard_limit(self, base_cfg, capsys):
+        n = 30  # 两家各 30 条 = 60 候选 > 安全阀 40
+        make_search_provider("pa", results=[{"title": f"a{i}", "url": f"ua{i}"}
+                                            for i in range(n)])
+        make_search_provider("pb", results=[{"title": f"b{i}", "url": f"ub{i}"}
+                                            for i in range(n)])
+        resp = api.search(base_cfg(), "web", "q", {"use": "pa,pb"})
+        assert len(resp.results) == api.MERGED_HARD_CAP
+        assert resp.metadata["truncated"] is True
+        expected = [f"{p}{i}" for i in range(api.MERGED_HARD_CAP // 2)
+                    for p in ("ua", "ub")]
+        assert [r.url for r in resp.results] == expected  # 轮转且确定性
+        assert "capped at" in capsys.readouterr().err
 
     def test_partial_failure_still_returns(self, base_cfg):
         make_search_provider("pa", fail_with=BOOM)
@@ -106,23 +128,54 @@ class TestSearchParallel:
             api.search(base_cfg(), "web", "q", {"use": "pa,pb"})
         assert exc.value.code == "search_failed"
 
-    def test_all_runs_default_chain_in_parallel(self, base_cfg):
-        a = make_search_provider("pa", results=[{"title": "a", "url": "ua"}],
-                                 categories=("web",))
-        b = make_search_provider("pb", results=[{"title": "b", "url": "ub"}],
-                                 categories=("web",))
-        cfg = base_cfg(chains={"web": ["pa", "pb"]})
-        resp = api.search(cfg, "web", "q", {"all": True})
-        assert len(a.calls) == 1 and len(b.calls) == 1  # 全员并行
-        assert sorted(r.url for r in resp.results) == ["ua", "ub"]
 
-    def test_all_skips_uncredentialed_like_chain(self, base_cfg):
-        locked = make_search_provider("pa", auth_required=True, credentialed=False)
-        open_ = make_search_provider("pb", results=OK)
-        cfg = base_cfg(chains={"web": ["pa", "pb"]})
-        resp = api.search(cfg, "web", "q", {"all": True})
-        assert len(locked.calls) == 0 and len(open_.calls) == 1
-        assert resp.metadata["backend"] == "pb"
+class TestSearchEscalate:
+    """--max N：逐家升级，去重累计达标即停，最后一家自然超出不修剪。"""
+
+    def test_target_met_by_first_provider_no_more_calls(self, base_cfg):
+        a = make_search_provider("ea", results=[
+            {"title": f"t{i}", "url": f"u{i}"} for i in range(5)])
+        b = make_search_provider("eb", results=[{"title": "x", "url": "ux"}])
+        cfg = base_cfg(chains={"web": ["ea", "eb"]})
+        resp = api.search(cfg, "web", "q", {"max": 3})
+        assert len(a.calls) == 1 and len(b.calls) == 0  # 达标即停：b 未被问
+        assert resp.metadata["backend"] == "ea"
+        assert len(resp.results) == 5  # 超出 3 的部分不修剪
+
+    def test_escalates_until_target_with_cross_dedup(self, base_cfg):
+        make_search_provider("ea", results=[{"title": "t1", "url": "u1"},
+                                            {"title": "t2", "url": "u2"}])
+        make_search_provider("eb", results=[{"title": "dup", "url": "u1"},  # 与 ea 重叠
+                                            {"title": "t3", "url": "u3"},
+                                            {"title": "t4", "url": "u4"},
+                                            {"title": "t5", "url": "u5"}])
+        cfg = base_cfg(chains={"web": ["ea", "eb"]})
+        resp = api.search(cfg, "web", "q", {"max": 5})
+        assert {r.url for r in resp.results} == {"u1", "u2", "u3", "u4", "u5"}
+        assert resp.metadata["backend"] == "ea,eb"
+
+    def test_failure_falls_through_to_next(self, base_cfg):
+        a = make_search_provider("ea", fail_with=BOOM)
+        b = make_search_provider("eb", results=OK)
+        cfg = base_cfg(chains={"web": ["ea", "eb"]})
+        resp = api.search(cfg, "web", "q", {"max": 1})
+        assert len(a.calls) == 1 and len(b.calls) == 1
+        assert resp.metadata["backend"] == "eb"
+        assert [r.url for r in resp.results] == ["https://a/1"]
+
+    def test_names_exhausted_returns_partial(self, base_cfg):
+        make_search_provider("ea", results=[{"title": "t1", "url": "u1"},
+                                            {"title": "t2", "url": "u2"}])
+        make_search_provider("eb", fail_with=BOOM)
+        cfg = base_cfg(chains={"web": ["ea", "eb"]})
+        resp = api.search(cfg, "web", "q", {"max": 10})
+        assert len(resp.results) == 2  # 凑不满也带回已有结果
+        assert resp.metadata["backend"] == "ea"
+
+    @pytest.mark.parametrize("bad", [0, -3])
+    def test_non_positive_max_is_usage_error(self, base_cfg, bad):
+        with pytest.raises(UsageError):
+            api.search(base_cfg(), "web", "q", {"max": bad})
 
 
 # ── fetch / convert 顺序覆盖链 ───────────────────────────────────────────────
@@ -184,6 +237,24 @@ class TestTimeoutResolution:
         cfg = base_cfg(chains={"page": ["t_b"]}, settings_timeout=17)
         api.fetch(cfg, "https://x.test/")
         assert svc.calls[0]["timeout"] == 17
+
+    def test_unconfigured_web_provider_gets_fast_default(self, base_cfg):
+        # 无任何显式超时：web 类别落到快速缺省（搜索不等长超时）
+        svc = make_search_provider("t_fast", results=OK)
+        cfg = base_cfg(chains={"web": ["t_fast"]}, settings_timeout=30)
+        api.search(cfg, "web", "q")
+        assert svc.calls[0]["timeout"] == api.SEARCH_DEFAULT_TIMEOUT
+
+    def test_cli_wires_explicit_settings_through(self, isolated_config):
+        # 端到端：稀疏文件里有 settings.timeout → cmd_search 关掉快速缺省
+        import json
+
+        from eztool import cli as ezcli
+        svc = make_search_provider("t_cli", results=OK)
+        (isolated_config / "config.json").write_text(
+            json.dumps({"settings": {"timeout": 45}}), encoding="utf-8")
+        ezcli.main(["search", "q", "--use", "t_cli"])
+        assert svc.calls[0]["timeout"] == 45
 
 
 # ── api 层质量门（_convert_chain）────────────────────────────────────────────

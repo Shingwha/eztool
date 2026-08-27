@@ -37,7 +37,6 @@ from ..util import (
 DEFAULT_BASE_URL = "https://api.anysearch.com"
 MCP_ENDPOINT = "https://api.anysearch.com/mcp"  # MCP JSON-RPC 通道（extract 等工具）
 API_MAX_RESULTS = 20  # 显式传参时的上限
-DEFAULT_TIMEOUT = 60
 
 # HTTP 状态码 → 语义码（原 core.py 映射，保留）
 _ERROR_CODES: dict[int, str] = {
@@ -62,7 +61,7 @@ def _call_api(
     api_key: str | None = None,
     max_results: int | None = None,
     base_url: str | None = None,
-    timeout: int = DEFAULT_TIMEOUT,
+    timeout: int = 60,
 ) -> dict[str, Any]:
     """调用 AnySearch 统一搜索 API，返回解析后的顶层 JSON dict。
 
@@ -172,7 +171,7 @@ class AnySearchProvider(Provider):
         t0 = time.monotonic()
         _call_api(
             query="test", api_key=self.api_key, max_results=1,
-            timeout=self.timeout(DEFAULT_TIMEOUT),
+            timeout=self.timeout(),
         )
         elapsed = time.monotonic() - t0
         if self.api_key is None:
@@ -201,7 +200,7 @@ class AnySearchProvider(Provider):
             query,
             api_key=self.api_key,
             max_results=count,
-            timeout=self.timeout(DEFAULT_TIMEOUT),
+            timeout=self.timeout(),
         )
 
         resp_data = data.get("data", {})
